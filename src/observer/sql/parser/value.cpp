@@ -20,11 +20,11 @@ See the Mulan PSL v2 for more details. */
 #include "common/lang/string.h"
 #include <cstring>
 
-const char *ATTR_TYPE_NAME[] = {"undefined", "chars", "ints", "floats", "booleans"};
+const char *ATTR_TYPE_NAME[] = {"undefined", "chars", "ints", "floats", "dates", "booleans"};
 
 const char *attr_type_to_string(AttrType type)
 {
-  if (type >= UNDEFINED && type <= FLOATS) {
+  if (type >= UNDEFINED && type <= BOOLEANS) {
     return ATTR_TYPE_NAME[type];
   }
   return "unknown";
@@ -158,6 +158,9 @@ void Value::set_value(const Value &value)
     case CHARS: {
       set_string(value.get_string().c_str());
     } break;
+    case DATES: {
+      set_date(value.get_date());
+    } break;
     case BOOLEANS: {
       set_boolean(value.get_boolean());
     } break;
@@ -226,6 +229,9 @@ int Value::compare(const Value &other) const
             this->str_value_.length(),
             (void *)other.str_value_.c_str(),
             other.str_value_.length());
+      } break;
+      case DATES: {
+        return common::compare_int((void *)&this->num_value_.date_value_, (void *)&other.num_value_.date_value_);
       } break;
       case BOOLEANS: {
         return common::compare_int((void *)&this->num_value_.bool_value_, (void *)&other.num_value_.bool_value_);
