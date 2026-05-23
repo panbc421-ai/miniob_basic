@@ -77,6 +77,10 @@ void Value::set_data(char *data, int length)
       num_value_.bool_value_ = *(int *)data != 0;
       length_ = length;
     } break;
+    case DATES: {
+  num_value_.date_value_ = *(int *)data;
+  length_ = length;
+} break;
     default: {
       LOG_WARN("unknown data type: %d", attr_type_);
     } break;
@@ -84,13 +88,21 @@ void Value::set_data(char *data, int length)
 }
 static bool check_date(int y, int m, int d)
 {
-  static int days_of_month[] = {0, 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
-  if (m < 1 || m > 12 || d < 1) return false;
-  bool leap = (y % 4 == 0 && y % 100 != 0) || (y % 400 == 0);
-  if (m == 2 && leap) {
-    return d <= 29;
+  // Validate year/month/day ranges. Accept years in [1, 9999].
+  if (y < 1 || y > 9999) {
+    return false;
   }
-  return d <= days_of_month[m];
+  if (m < 1 || m > 12 || d < 1) {
+    return false;
+  }
+
+  static const int days_of_month[] = {0, 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
+  bool leap = (y % 4 == 0 && y % 100 != 0) || (y % 400 == 0);
+  int max_day = days_of_month[m];
+  if (m == 2 && leap) {
+    max_day = 29;
+  }
+  return d <= max_day;
 }
 void Value::set_int(int val)
 {
@@ -152,9 +164,7 @@ void Value::set_value(const Value &value)
     case UNDEFINED: {
       ASSERT(false, "got an invalid value type");
     } break;
-    case DATES: {
-  set_date(value.get_date());
-    } break;
+    
   }
 }
 

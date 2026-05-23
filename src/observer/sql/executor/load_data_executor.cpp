@@ -50,6 +50,7 @@ RC insert_record_from_file(Table *table,
   const int sys_field_num = table->table_meta().sys_field_num();
 
   if (file_values.size() < record_values.size()) {
+    errmsg << "schema field missing. expected " << field_num << " values, got " << file_values.size();
     return RC::SCHEMA_FIELD_MISSING;
   }
 
@@ -62,6 +63,31 @@ RC insert_record_from_file(Table *table,
     std::string &file_value = file_values[i];
     if (field->type() != CHARS) {
       common::strip(file_value);
+    } else {
+      // For quoted character values, remove whitespace around the quoted content.
+      std::string trimmed_value = file_value;
+      common::strip(trimmed_value);
+      if (trimmed_value.size() >= 2) {
+        char first = trimmed_value.front();
+        char last = trimmed_value.back();
+        if ((first == '"' && last == '"') || (first == '\'' && last == '\'')) {
+          file_value = trimmed_value;
+        }
+      }
+    }
+
+    // If the value is quoted ("..." or '...'), remove surrounding quotes
+    if (file_value.size() >= 2) {
+      char first = file_value.front();
+      char last = file_value.back();
+      if ((first == '"' && last == '"') || (first == '\'' && last == '\'')) {
+        file_value = file_value.substr(1, file_value.size() - 2);
+      }
+    }
+
+    // Remove trailing CR in case of Windows-style line endings.
+    if (!file_value.empty() && file_value.back() == '\r') {
+      file_value.pop_back();
     }
 
     switch (field->type()) {
@@ -149,7 +175,20 @@ void LoadDataExecutor::load_data(Table *table, const char *file_name, SqlResult 
     }
 
     file_values.clear();
-    common::split_string(line, delim, file_values);
+    {
+      // Preserve empty values between delimiters, including trailing empty fields.
+      std::vector<char *> line_values;
+      char *mutable_line = strdup(line.c_str());
+      common::split_string(mutable_line, '|', line_values, true);
+      for (char *value : line_values) {
+        if (value) {
+          file_values.emplace_back(value);
+        } else {
+          file_values.emplace_back("");
+        }
+      }
+      free(mutable_line);
+    }
     std::stringstream errmsg;
     rc = insert_record_from_file(table, file_values, record_values, errmsg);
     if (rc != RC::SUCCESS) {
@@ -168,6 +207,6 @@ void LoadDataExecutor::load_data(Table *table, const char *file_name, SqlResult 
     result_string << strrc(rc) << ". total " << line_num << " line(s) handled and " << insertion_count
                   << " record(s) loaded, total cost " << cost_nano / 1000000000.0 << " second(s)" << std::endl;
   }
-  sql_result->set_return_code(RC::SUCCESS);
+  sql_result->set_return_code(rc);
   sql_result->set_state_string(result_string.str());
 }

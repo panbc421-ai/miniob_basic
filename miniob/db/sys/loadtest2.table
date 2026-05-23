@@ -1,0 +1,29 @@
+{
+	"fields" : 
+	[
+		{
+			"len" : 4,
+			"name" : "id",
+			"offset" : 0,
+			"type" : "ints",
+			"visible" : true
+		},
+		{
+			"len" : 20,
+			"name" : "name",
+			"offset" : 4,
+			"type" : "chars",
+			"visible" : true
+		},
+		{
+			"len" : 4,
+			"name" : "age",
+			"offset" : 24,
+			"type" : "ints",
+			"visible" : true
+		}
+	],
+	"indexes" : null,
+	"table_id" : 1,
+	"table_name" : "loadtest2"
+}

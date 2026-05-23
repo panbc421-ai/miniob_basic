@@ -15,7 +15,24 @@
 #include "sql/parser/value.h"
 
 // 日期验证函数声明
-static bool check_date(int y, int m, int d);
+static bool check_date(int y, int m, int d)
+{
+  // Validate year/month/day ranges. Accept years in [1, 9999].
+  if (y < 1 || y > 9999) {
+    return false;
+  }
+  if (m < 1 || m > 12 || d < 1) {
+    return false;
+  }
+
+  static const int days_of_month[] = {0, 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
+  bool leap = (y % 4 == 0 && y % 100 != 0) || (y % 400 == 0);
+  int max_day = days_of_month[m];
+  if (m == 2 && leap) {
+    max_day = 29;
+  }
+  return d <= max_day;
+}
 using namespace std;
 
 string token_name(const char *sql_string, YYLTYPE *llocp)
@@ -75,7 +92,6 @@ ArithmeticExpr *create_arithmetic_expression(ArithmeticExpr::Type type,
         RBRACE
         COMMA
         DATE_T
-        DATE_STR
         TRX_BEGIN
         TRX_COMMIT
         TRX_ROLLBACK
@@ -127,8 +143,6 @@ ArithmeticExpr *create_arithmetic_expression(ArithmeticExpr::Type type,
 %token <floats> FLOAT
 %token <string> ID
 %token <string> SSS
-%token <string> DATE_STR
-%token DATE_T
 //非终结符
 
 /** type 定义了各种解析后的结果输出的是什么类型。类型对应了 union 中的定义的成员变量名称 **/
@@ -389,24 +403,20 @@ value:
       @$ = @1;
     }
     |SSS {
-      char *tmp = common::substr($1,1,strlen($1)-2);
-      $$ = new Value(tmp);
-      free(tmp);
-    }
-    |DATE_STR {
-        // 解析日期字符串 yyyy-mm-dd
-        int y, m, d;
-        sscanf($1, "%d-%d-%d", &y, &m, &d);
-        bool valid = check_date(y, m, d);
-        if (!valid) {
-          yyerror(&@$, sql_string, sql_result, scanner, "Invalid date value");
-          YYERROR;
-        }
-        int date_val = y * 10000 + m * 100 + d;
-        $$ = new Value();
-        $$->set_date(date_val);
-        free($1);
-      }
+  char *tmp = common::substr($1,1,strlen($1)-2);
+  // 尝试解析为日期
+  int y, m, d;
+  if (sscanf(tmp, "%d-%d-%d", &y, &m, &d) == 3 && check_date(y, m, d)) {
+    int date_val = y * 10000 + m * 100 + d;
+    $$ = new Value();
+    $$->set_date(date_val);
+  } else {
+    $$ = new Value(tmp);
+  }
+  free(tmp);
+  free($1);
+}
+    
     ;
     
 delete_stmt:    /*  delete 语句的语法解析树*/
