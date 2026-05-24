@@ -405,13 +405,7 @@ value:
     |SSS {
   char *tmp = common::substr($1, 1, strlen($1)-2);
   int y, m, d;
-  if (sscanf(tmp, "%d-%d-%d", &y, &m, &d) == 3) {
-    if (!check_date(y, m, d)) {
-      free(tmp);
-      free($1);
-      yyerror(&@$, sql_string, sql_result, scanner, "Invalid date value");
-      YYERROR;
-    }
+  if (sscanf(tmp, "%d-%d-%d", &y, &m, &d) == 3 && check_date(y, m, d)) {
     int date_val = y * 10000 + m * 100 + d;
     $$ = new Value();
     $$->set_date(date_val);

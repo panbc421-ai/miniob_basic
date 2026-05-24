@@ -125,6 +125,23 @@ RC FilterStmt::create_filter_unit(Db *db, Table *default_table, std::unordered_m
   }
 
   filter_unit->set_comp(comp);
+  if (!filter_unit->left().is_attr && !filter_unit->right().is_attr) {
+  // 两边都是值，不需要检查
+} else if (filter_unit->left().is_attr && !filter_unit->right().is_attr) {
+  const FieldMeta *field = filter_unit->left().field.meta();
+  if (field->type() == DATES && filter_unit->right().value.attr_type() == CHARS) {
+    delete filter_unit;
+    filter_unit = nullptr;
+    return RC::INVALID_ARGUMENT;
+  }
+} else if (!filter_unit->left().is_attr && filter_unit->right().is_attr) {
+  const FieldMeta *field = filter_unit->right().field.meta();
+  if (field->type() == DATES && filter_unit->left().value.attr_type() == CHARS) {
+    delete filter_unit;
+    filter_unit = nullptr;
+    return RC::INVALID_ARGUMENT;
+  }
+}
 
   // 检查两个类型是否能够比较
   return rc;
