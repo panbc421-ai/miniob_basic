@@ -29,7 +29,7 @@ See the Mulan PSL v2 for more details. */
 #include "sql/stmt/set_variable_stmt.h"
 #include "sql/stmt/load_data_stmt.h"
 #include "sql/stmt/calc_stmt.h"
-
+#include "sql/stmt/update_stmt.h"
 RC Stmt::create_stmt(Db *db, ParsedSqlNode &sql_node, Stmt *&stmt)
 {
   stmt = nullptr;
@@ -52,6 +52,9 @@ RC Stmt::create_stmt(Db *db, ParsedSqlNode &sql_node, Stmt *&stmt)
     case SCF_CREATE_INDEX: {
       return CreateIndexStmt::create(db, sql_node.create_index, stmt);
     }
+    case SCF_UPDATE: {
+  return UpdateStmt::create(db, sql_node.update, stmt);
+  }
 
     case SCF_CREATE_TABLE: {
       return CreateTableStmt::create(db, sql_node.create_table, stmt);
