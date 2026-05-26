@@ -83,8 +83,15 @@ RC AggregationPhysicalOperator::next()
           }
         }
       } else if (attr_type == DATES) {
+        double d = val.get_date();
         if (af.agg_type == AGG_COUNT) {
           counts[i]++;
+        }
+        if (af.agg_type == AGG_MAX) {
+          if (d > max_num_vals[i]) max_num_vals[i] = d;
+        }
+        if (af.agg_type == AGG_MIN) {
+          if (d < min_num_vals[i]) min_num_vals[i] = d;
         }
       }
     }
@@ -118,6 +125,8 @@ RC AggregationPhysicalOperator::next()
             result.set_string(max_str_vals[i].c_str());
           else
             result.set_string("");
+        } else if (af.field_meta && af.field_meta->type() == DATES) {
+          result.set_date((int)max_num_vals[i]);
         } else if (af.field_meta && af.field_meta->type() == INTS) {
           result.set_int((int)max_num_vals[i]);
         } else {
@@ -130,6 +139,8 @@ RC AggregationPhysicalOperator::next()
             result.set_string(min_str_vals[i].c_str());
           else
             result.set_string("");
+        } else if (af.field_meta && af.field_meta->type() == DATES) {
+          result.set_date((int)min_num_vals[i]);
         } else if (af.field_meta && af.field_meta->type() == INTS) {
           result.set_int((int)min_num_vals[i]);
         } else {
