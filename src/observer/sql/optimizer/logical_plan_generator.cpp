@@ -136,9 +136,23 @@ RC LogicalPlanGenerator::create_plan(
 
   if (filter_stmt != nullptr) {
     for (const FilterUnit *unit : filter_stmt->filter_units()) {
-      // 基于表达式的 filter 稍后统一处理，这里跳过 FilterObj 分类
+      // 基于表达式的 filter: 尝试分类以支持 join interleaving
       if (unit->is_expr_based()) {
-        expr_filters.push_back(unit);
+        std::set<std::string> ref_tables;
+        if (unit->left_expr())  collect_table_refs(unit->left_expr(), ref_tables);
+        if (unit->right_expr()) collect_table_refs(unit->right_expr(), ref_tables);
+        if (ref_tables.empty()) {
+          // 常量比较（如 1=1）：跳过，稍后在 expr_filters 中处理
+          expr_filters.push_back(unit);
+        } else if (ref_tables.size() == 1) {
+          // 单表过滤器
+          std::string tn = *ref_tables.begin();
+          table_filters[tn].push_back(unit);
+        } else {
+          // 多表 join 过滤器
+          join_filters.push_back(unit);
+          join_filter_tables.push_back(ref_tables);
+        }
         continue;
       }
       std::string ref_table;
@@ -195,15 +209,17 @@ RC LogicalPlanGenerator::create_plan(
     if (it != table_filters.end() && !it->second.empty()) {
       std::vector<unique_ptr<Expression>> cmp_exprs;
       for (const FilterUnit *unit : it->second) {
-        auto make_expr = [](const FilterObj &obj) -> unique_ptr<Expression> {
-          if (obj.is_attr) {
-            return unique_ptr<Expression>(new FieldExpr(obj.field));
-          } else {
-            return unique_ptr<Expression>(new ValueExpr(obj.value));
-          }
-        };
-        ComparisonExpr *cmp = new ComparisonExpr(unit->comp(), make_expr(unit->left()), make_expr(unit->right()));
-        cmp_exprs.emplace_back(cmp);
+        if (unit->is_expr_based()) {
+          auto left  = clone_expr_tree(unit->left_expr());
+          auto right = clone_expr_tree(unit->right_expr());
+          cmp_exprs.emplace_back(new ComparisonExpr(unit->comp(), std::move(left), std::move(right)));
+        } else {
+          auto make_expr = [](const FilterObj &obj) -> unique_ptr<Expression> {
+            if (obj.is_attr) return unique_ptr<Expression>(new FieldExpr(obj.field));
+            else return unique_ptr<Expression>(new ValueExpr(obj.value));
+          };
+          cmp_exprs.emplace_back(new ComparisonExpr(unit->comp(), make_expr(unit->left()), make_expr(unit->right())));
+        }
       }
       unique_ptr<ConjunctionExpr> conj(new ConjunctionExpr(ConjunctionExpr::Type::AND, cmp_exprs));
       unique_ptr<PredicateLogicalOperator> pred(new PredicateLogicalOperator(std::move(conj)));
@@ -250,15 +266,17 @@ RC LogicalPlanGenerator::create_plan(
       if (!covered.empty()) {
         std::vector<unique_ptr<Expression>> cmp_exprs;
         for (const FilterUnit *unit : covered) {
-          auto make_expr = [](const FilterObj &obj) -> unique_ptr<Expression> {
-            if (obj.is_attr) {
-              return unique_ptr<Expression>(new FieldExpr(obj.field));
-            } else {
-              return unique_ptr<Expression>(new ValueExpr(obj.value));
-            }
-          };
-          ComparisonExpr *cmp = new ComparisonExpr(unit->comp(), make_expr(unit->left()), make_expr(unit->right()));
-          cmp_exprs.emplace_back(cmp);
+          if (unit->is_expr_based()) {
+            auto left  = clone_expr_tree(unit->left_expr());
+            auto right = clone_expr_tree(unit->right_expr());
+            cmp_exprs.emplace_back(new ComparisonExpr(unit->comp(), std::move(left), std::move(right)));
+          } else {
+            auto make_expr = [](const FilterObj &obj) -> unique_ptr<Expression> {
+              if (obj.is_attr) return unique_ptr<Expression>(new FieldExpr(obj.field));
+              else return unique_ptr<Expression>(new ValueExpr(obj.value));
+            };
+            cmp_exprs.emplace_back(new ComparisonExpr(unit->comp(), make_expr(unit->left()), make_expr(unit->right())));
+          }
         }
         unique_ptr<ConjunctionExpr> conj(new ConjunctionExpr(ConjunctionExpr::Type::AND, cmp_exprs));
         unique_ptr<PredicateLogicalOperator> pred(new PredicateLogicalOperator(std::move(conj)));
