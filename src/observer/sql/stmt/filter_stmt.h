@@ -78,10 +78,18 @@ public:
     return right_;
   }
 
+  bool is_expr_based() const { return left_expr_ != nullptr || right_expr_ != nullptr; }
+  Expression *left_expr() const { return left_expr_; }
+  Expression *right_expr() const { return right_expr_; }
+  void set_left_expr(Expression *e) { left_expr_ = e; }
+  void set_right_expr(Expression *e) { right_expr_ = e; }
+
 private:
   CompOp comp_ = NO_OP;
   FilterObj left_;
   FilterObj right_;
+  Expression *left_expr_ = nullptr;
+  Expression *right_expr_ = nullptr;
 };
 
 /**

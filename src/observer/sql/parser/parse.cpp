@@ -26,6 +26,14 @@ CalcSqlNode::~CalcSqlNode()
   expressions.clear();
 }
 
+ConditionSqlNode::~ConditionSqlNode()
+{
+  delete left_expr;
+  delete right_expr;
+  left_expr = nullptr;
+  right_expr = nullptr;
+}
+
 ParsedSqlNode::ParsedSqlNode() : flag(SCF_ERROR)
 {}
 

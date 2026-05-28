@@ -90,6 +90,27 @@ RC FilterStmt::create_filter_unit(Db *db, Table *default_table, std::unordered_m
 
   filter_unit = new FilterUnit;
 
+  // 表达式路径
+  if (condition.left_expr != nullptr || condition.right_expr != nullptr) {
+    filter_unit->set_comp(comp);
+    if (condition.left_expr) {
+      std::unique_ptr<Expression> e(condition.left_expr);
+      // 移走所有权，避免 condition 析构时 double-free
+      const_cast<ConditionSqlNode &>(condition).left_expr = nullptr;
+      RC rc = resolve_expression(e, default_table, tables);
+      if (rc != RC::SUCCESS) return rc;
+      filter_unit->set_left_expr(e.release());
+    }
+    if (condition.right_expr) {
+      std::unique_ptr<Expression> e(condition.right_expr);
+      const_cast<ConditionSqlNode &>(condition).right_expr = nullptr;
+      RC rc = resolve_expression(e, default_table, tables);
+      if (rc != RC::SUCCESS) return rc;
+      filter_unit->set_right_expr(e.release());
+    }
+    return RC::SUCCESS;
+  }
+
   if (condition.left_is_attr) {
     Table *table = nullptr;
     const FieldMeta *field = nullptr;

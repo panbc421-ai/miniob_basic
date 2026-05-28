@@ -153,6 +153,8 @@ ArithmeticExpr *create_arithmetic_expression(ArithmeticExpr::Type type,
   float                             floats;
   bool                              boolean;
   JoinClauseNode *                  join_clause;
+  SelectExprNode *                  select_expr;
+  std::vector<SelectExprNode> *     select_expr_list;
 }
 
 %token <number> NUMBER
@@ -202,6 +204,8 @@ ArithmeticExpr *create_arithmetic_expression(ArithmeticExpr::Type type,
 %type <order_by_list>       order_by_clause
 %type <order_by_list>       order_by_list
 %type <boolean>             opt_asc_desc
+%type <select_expr>         select_expr_item
+%type <select_expr_list>    select_expr_list
 %type <join_clause>         join_clause
 // commands should be a list but I use a single command instead
 %type <sql_node>            commands
@@ -499,6 +503,38 @@ select_stmt:        /*  select 语句的语法解析树*/
       }
       free($4);
     }
+    | SELECT select_expr_list FROM ID join_clause where order_by_clause
+    {
+      $$ = new ParsedSqlNode(SCF_SELECT);
+      if ($2 != nullptr) {
+        $$->selection.expressions.swap(*$2);
+        delete $2;
+      }
+      if ($5 != nullptr) {
+        for (auto &r : $5->relations) {
+          $$->selection.relations.push_back(r);
+        }
+        for (auto &c : $5->conditions) {
+          $$->selection.conditions.emplace_back(std::move(c));
+        }
+        delete $5;
+      }
+      $$->selection.relations.push_back($4);
+      std::reverse($$->selection.relations.begin(), $$->selection.relations.end());
+
+      if ($6 != nullptr) {
+        for (auto &c : *$6) {
+          $$->selection.conditions.emplace_back(std::move(c));
+        }
+        delete $6;
+      }
+      if ($7 != nullptr) {
+        std::reverse($7->begin(), $7->end());
+        $$->selection.order_by.swap(*$7);
+        delete $7;
+      }
+      free($4);
+    }
     ;
 calc_stmt:
     CALC expression_list
@@ -551,6 +587,17 @@ expression:
       $$->set_name(token_name(sql_string, &@$));
       delete $1;
     }
+    | ID {
+      $$ = new UnboundFieldExpr("", $1);
+      $$->set_name($1);
+      free($1);
+    }
+    | ID DOT ID {
+      $$ = new UnboundFieldExpr($1, $3);
+      $$->set_name($3);
+      free($1);
+      free($3);
+    }
     ;
 
 select_attr:
@@ -571,6 +618,35 @@ select_attr:
       delete $1;
     }
     ;
+
+select_expr_item:
+    expression
+    {
+      $$ = new SelectExprNode;
+      $$->expr = $1;
+      $$->alias = $1->name();
+    }
+    ;
+
+select_expr_list:
+    select_expr_item
+    {
+      $$ = new std::vector<SelectExprNode>;
+      $$->emplace_back(std::move(*$1));
+      delete $1;
+    }
+    | select_expr_item COMMA select_expr_list
+    {
+      if ($3 != nullptr) {
+        $$ = $3;
+      } else {
+        $$ = new std::vector<SelectExprNode>;
+      }
+      $$->emplace_back(std::move(*$1));
+      delete $1;
+    }
+    ;
+select_attr:
 
 rel_attr:
     ID {
@@ -680,76 +756,27 @@ condition_list:
     }
     ;
 condition:
-    rel_attr comp_op value
+    expression comp_op expression
     {
       $$ = new ConditionSqlNode;
-      $$->left_is_attr = 1;
-      $$->left_attr = *$1;
-      $$->right_is_attr = 0;
-      $$->right_value = *$3;
+      $$->left_expr = $1;
+      $$->right_expr = $3;
       $$->comp = $2;
-
-      delete $1;
-      delete $3;
     }
-    | value comp_op value 
+    | expression LIKE value
     {
       $$ = new ConditionSqlNode;
-      $$->left_is_attr = 0;
-      $$->left_value = *$1;
-      $$->right_is_attr = 0;
-      $$->right_value = *$3;
-      $$->comp = $2;
-
-      delete $1;
-      delete $3;
-    }
-    | rel_attr comp_op rel_attr
-    {
-      $$ = new ConditionSqlNode;
-      $$->left_is_attr = 1;
-      $$->left_attr = *$1;
-      $$->right_is_attr = 1;
-      $$->right_attr = *$3;
-      $$->comp = $2;
-
-      delete $1;
-      delete $3;
-    }
-    | value comp_op rel_attr
-    {
-      $$ = new ConditionSqlNode;
-      $$->left_is_attr = 0;
-      $$->left_value = *$1;
-      $$->right_is_attr = 1;
-      $$->right_attr = *$3;
-      $$->comp = $2;
-
-      delete $1;
-      delete $3;
-    }
-    | rel_attr LIKE value
-    {
-      $$ = new ConditionSqlNode;
-      $$->left_is_attr = 1;
-      $$->left_attr = *$1;
-      $$->right_is_attr = 0;
-      $$->right_value = *$3;
+      $$->left_expr = $1;
+      $$->right_expr = new ValueExpr(*$3);
       $$->comp = LIKE_OP;
-
-      delete $1;
       delete $3;
     }
-    | rel_attr NOT LIKE value
+    | expression NOT LIKE value
     {
       $$ = new ConditionSqlNode;
-      $$->left_is_attr = 1;
-      $$->left_attr = *$1;
-      $$->right_is_attr = 0;
-      $$->right_value = *$4;
+      $$->left_expr = $1;
+      $$->right_expr = new ValueExpr(*$4);
       $$->comp = NOT_LIKE;
-
-      delete $1;
       delete $4;
     }
     ;

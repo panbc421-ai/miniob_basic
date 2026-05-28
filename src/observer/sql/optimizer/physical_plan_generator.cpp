@@ -192,6 +192,11 @@ RC PhysicalPlanGenerator::create_plan(ProjectLogicalOperator &project_oper, uniq
     project_operator->add_projection(field.table(), field.meta());
   }
 
+  auto &expressions = project_oper.expressions();
+  if (!expressions.empty()) {
+    project_operator->add_expressions(std::move(expressions));
+  }
+
   if (child_phy_oper) {
     project_operator->add_child(std::move(child_phy_oper));
   }

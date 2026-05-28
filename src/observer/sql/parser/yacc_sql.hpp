@@ -145,8 +145,10 @@ union YYSTYPE
   float                             floats;
   bool                              boolean;
   JoinClauseNode *                  join_clause;
+  SelectExprNode *                  select_expr;
+  std::vector<SelectExprNode> *     select_expr_list;
 
-#line 150 "yacc_sql.hpp"
+#line 152 "yacc_sql.hpp"
 
 };
 typedef union YYSTYPE YYSTYPE;

@@ -11,6 +11,10 @@ SelectStmt::~SelectStmt()
     delete filter_stmt_;
     filter_stmt_ = nullptr;
   }
+  for (auto &se : select_exprs_) {
+    delete se.expr;
+    se.expr = nullptr;
+  }
 }
 
 static void wildcard_fields(Table *table, std::vector<Field> &field_metas)
@@ -178,6 +182,25 @@ RC SelectStmt::create(Db *db, const SelectSqlNode &select_sql, Stmt *&stmt)
     return rc;
   }
 
+  // 处理表达式 select items
+  std::vector<SelectExprNode> select_exprs;
+  if (!select_sql.expressions.empty()) {
+    for (size_t i = 0; i < select_sql.expressions.size(); i++) {
+      SelectExprNode resolved;
+      resolved.alias = select_sql.expressions[i].alias;
+      std::unique_ptr<Expression> e(select_sql.expressions[i].expr);
+      const_cast<SelectSqlNode&>(select_sql).expressions[i].expr = nullptr;
+      RC rc = resolve_expression(e, default_table, &table_map);
+      if (rc != RC::SUCCESS) {
+        LOG_WARN("failed to resolve expression in select list");
+        return rc;
+      }
+      resolved.expr = e.release();
+      select_exprs.push_back(std::move(resolved));
+    }
+    const_cast<SelectSqlNode&>(select_sql).expressions.clear();
+  }
+
   SelectStmt *select_stmt = new SelectStmt();
   select_stmt->tables_.swap(tables);
   select_stmt->query_fields_.swap(query_fields);
@@ -185,6 +208,7 @@ RC SelectStmt::create(Db *db, const SelectSqlNode &select_sql, Stmt *&stmt)
   select_stmt->agg_fields_.swap(agg_fields);
   select_stmt->has_aggregation_ = has_aggregation;
   select_stmt->order_by_ = select_sql.order_by;
+  select_stmt->select_exprs_.swap(select_exprs);
   stmt = select_stmt;
   return RC::SUCCESS;
 }

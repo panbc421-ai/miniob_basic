@@ -23,6 +23,13 @@ See the Mulan PSL v2 for more details. */
 #include "common/log/log.h"
 
 class Tuple;
+class Table;
+
+/**
+ * @brief 解析表达式树中的 UnboundFieldExpr 为 FieldExpr
+ */
+RC resolve_expression(std::unique_ptr<Expression> &expr, Table *default_table,
+    std::unordered_map<std::string, Table *> *table_map);
 
 /**
  * @defgroup Expression
@@ -43,6 +50,7 @@ enum class ExprType
   COMPARISON,   ///< 需要做比较的表达式
   CONJUNCTION,  ///< 多个表达式使用同一种关系(AND或OR)来联结
   ARITHMETIC,   ///< 算术运算
+  UNBOUND_FIELD,///< 未绑定的字段引用，需要在stmt阶段解析
 };
 
 /**
@@ -156,6 +164,35 @@ public:
 
 private:
   Value value_;
+};
+
+/**
+ * @brief 未绑定的字段表达式（解析阶段暂存，stmt阶段解析为FieldExpr）
+ * @ingroup Expression
+ */
+class UnboundFieldExpr : public Expression
+{
+public:
+  UnboundFieldExpr(const std::string &table_name, const std::string &field_name)
+    : table_name_(table_name), field_name_(field_name)
+  {}
+
+  virtual ~UnboundFieldExpr() = default;
+
+  ExprType type() const override { return ExprType::UNBOUND_FIELD; }
+  AttrType value_type() const override { return UNDEFINED; }
+
+  const std::string &table_name() const { return table_name_; }
+  const std::string &field_name() const { return field_name_; }
+
+  RC get_value(const Tuple &tuple, Value &value) const override
+  {
+    return RC::UNIMPLENMENT;
+  }
+
+private:
+  std::string table_name_;
+  std::string field_name_;
 };
 
 /**

@@ -56,4 +56,5 @@ private:
   //! 或者是执行某个函数。所以这里应该是表达式Expression。
   //! 不过现在简单处理，就使用字段来描述
   std::vector<Field> fields_;
+  std::vector<std::unique_ptr<Expression>> expressions_;
 };
