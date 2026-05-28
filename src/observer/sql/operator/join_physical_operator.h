@@ -17,9 +17,69 @@ See the Mulan PSL v2 for more details. */
 #include "sql/parser/parse.h"
 #include "sql/operator/physical_operator.h"
 
+class Table;
+
 /**
- * @brief 最简单的两表（称为左表、右表）join算子
- * @details 依次遍历左表的每一行，然后关联右表的每一行
+ * @brief 缓存的右表行作为 Tuple，支持 find_cell 按字段名查找
+ * @ingroup Tuple
+ */
+class CachedRowTuple : public Tuple
+{
+public:
+  CachedRowTuple() = default;
+  virtual ~CachedRowTuple() = default;
+
+  void set_row(const std::string *table_name,
+               const std::vector<std::string> *field_names,
+               const std::vector<Value> *values)
+  {
+    table_name_ = table_name;
+    field_names_ = field_names;
+    values_ = values;
+  }
+
+  int cell_num() const override
+  {
+    if (values_ == nullptr) return 0;
+    return static_cast<int>(values_->size());
+  }
+
+  RC cell_at(int index, Value &cell) const override
+  {
+    if (values_ == nullptr || index < 0 || index >= static_cast<int>(values_->size()))
+      return RC::NOTFOUND;
+    cell = (*values_)[index];
+    return RC::SUCCESS;
+  }
+
+  RC find_cell(const TupleCellSpec &spec, Value &cell) const override
+  {
+    if (field_names_ == nullptr) return RC::NOTFOUND;
+    const char *table = spec.table_name();
+    const char *field = spec.field_name();
+    // 表名非空时必须匹配表名
+    if (table != nullptr && table[0] != '\0'
+        && table_name_ != nullptr
+        && 0 != strcmp(table, table_name_->c_str())) {
+      return RC::NOTFOUND;
+    }
+    for (size_t i = 0; i < field_names_->size(); i++) {
+      if (0 == strcmp(field, (*field_names_)[i].c_str())) {
+        cell = (*values_)[i];
+        return RC::SUCCESS;
+      }
+    }
+    return RC::NOTFOUND;
+  }
+
+private:
+  const std::string              *table_name_ = nullptr;
+  const std::vector<std::string> *field_names_ = nullptr;
+  const std::vector<Value>       *values_ = nullptr;
+};
+
+/**
+ * @brief 嵌套循环连接算子，对右子树为表扫描时做全量缓存优化
  * @ingroup PhysicalOperator
  */
 class NestedLoopJoinPhysicalOperator : public PhysicalOperator
@@ -39,18 +99,26 @@ public:
   Tuple *current_tuple() override;
 
 private:
-  RC left_next();   //! 左表遍历下一条数据
-  RC right_next();  //! 右表遍历下一条数据，如果上一轮结束了就重新开始新的一轮
+  RC left_next();
+  RC right_next();
+  bool try_cache_right(Trx *trx);
 
 private:
   Trx *trx_ = nullptr;
 
-  //! 左表右表的真实对象是在PhysicalOperator::children_中，这里是为了写的时候更简单
   PhysicalOperator *left_ = nullptr;
   PhysicalOperator *right_ = nullptr;
   Tuple *left_tuple_ = nullptr;
   Tuple *right_tuple_ = nullptr;
-  JoinedTuple joined_tuple_;  //! 当前关联的左右两个tuple
-  bool round_done_ = true;    //! 右表遍历的一轮是否结束
-  bool right_closed_ = true;  //! 右表算子是否已经关闭
+  JoinedTuple joined_tuple_;
+  bool round_done_ = true;
+  bool right_closed_ = true;
+
+  // 缓存优化：当右子树为 TableScan 时，全量缓存到内存
+  bool right_cached_ = false;
+  std::string right_table_name_;
+  std::vector<std::string> right_field_names_;
+  std::vector<std::vector<Value>> right_rows_;
+  CachedRowTuple cached_tuple_;
+  size_t cached_idx_ = 0;
 };
