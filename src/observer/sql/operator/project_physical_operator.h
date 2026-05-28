@@ -30,7 +30,7 @@ public:
 
   void add_expressions(std::vector<std::unique_ptr<Expression>> &&expressions)
   {
-    
+    expressions_ = std::move(expressions);
   }
   void add_projection(const Table *table, const FieldMeta *field);
 
@@ -52,4 +52,5 @@ public:
 
 private:
   ProjectTuple tuple_;
+  std::vector<std::unique_ptr<Expression>> expressions_;
 };

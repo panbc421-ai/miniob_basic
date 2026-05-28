@@ -14,8 +14,74 @@ See the Mulan PSL v2 for more details. */
 
 #include "sql/expr/expression.h"
 #include "sql/expr/tuple.h"
+#include "storage/table/table.h"
+#include <unordered_map>
 
 using namespace std;
+
+// 递归解析表达式树中的 UnboundFieldExpr → FieldExpr
+RC resolve_expression(unique_ptr<Expression> &expr,
+    Table *default_table,
+    unordered_map<string, Table *> *table_map)
+{
+  if (expr == nullptr) return RC::SUCCESS;
+
+  switch (expr->type()) {
+    case ExprType::UNBOUND_FIELD: {
+      auto *unbound = static_cast<UnboundFieldExpr *>(expr.get());
+      const string &table_name = unbound->table_name();
+      const string &field_name = unbound->field_name();
+
+      Table *table = nullptr;
+      if (!table_name.empty() && table_map != nullptr) {
+        auto it = table_map->find(table_name);
+        if (it != table_map->end()) table = it->second;
+      }
+      if (table == nullptr) table = default_table;
+      if (table == nullptr) {
+        LOG_WARN("cannot resolve field %s.%s: no table",
+                 table_name.c_str(), field_name.c_str());
+        return RC::SCHEMA_FIELD_MISSING;
+      }
+      const FieldMeta *fm = table->table_meta().field(field_name.c_str());
+      if (fm == nullptr) {
+        LOG_WARN("no such field %s in table %s",
+                 field_name.c_str(), table->name());
+        return RC::SCHEMA_FIELD_MISSING;
+      }
+      auto *resolved = new FieldExpr(table, fm);
+      resolved->set_name(expr->name());
+      expr.reset(resolved);
+      return RC::SUCCESS;
+    }
+    case ExprType::ARITHMETIC: {
+      auto *arith = static_cast<ArithmeticExpr *>(expr.get());
+      RC rc = resolve_expression(arith->left(), default_table, table_map);
+      if (rc != RC::SUCCESS) return rc;
+      if (arith->right()) {
+        rc = resolve_expression(arith->right(), default_table, table_map);
+        if (rc != RC::SUCCESS) return rc;
+      }
+      return RC::SUCCESS;
+    }
+    case ExprType::COMPARISON: {
+      auto *cmp = static_cast<ComparisonExpr *>(expr.get());
+      RC rc = resolve_expression(cmp->left(), default_table, table_map);
+      if (rc != RC::SUCCESS) return rc;
+      return resolve_expression(cmp->right(), default_table, table_map);
+    }
+    case ExprType::CONJUNCTION: {
+      auto *conj = static_cast<ConjunctionExpr *>(expr.get());
+      for (auto &child : conj->children()) {
+        RC rc = resolve_expression(child, default_table, table_map);
+        if (rc != RC::SUCCESS) return rc;
+      }
+      return RC::SUCCESS;
+    }
+    default:
+      return RC::SUCCESS;
+  }
+}
 
 static bool match_like(const char *str, int str_len, const char *pattern, int pat_len)
 {
@@ -342,10 +408,12 @@ RC ArithmeticExpr::get_value(const Tuple &tuple, Value &value) const
     LOG_WARN("failed to get value of left expression. rc=%s", strrc(rc));
     return rc;
   }
-  rc = right_->get_value(tuple, right_value);
-  if (rc != RC::SUCCESS) {
-    LOG_WARN("failed to get value of right expression. rc=%s", strrc(rc));
-    return rc;
+  if (right_) {
+    rc = right_->get_value(tuple, right_value);
+    if (rc != RC::SUCCESS) {
+      LOG_WARN("failed to get value of right expression. rc=%s", strrc(rc));
+      return rc;
+    }
   }
   return calc_value(left_value, right_value, value);
 }

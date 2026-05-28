@@ -77,14 +77,45 @@ enum CompOp
 struct ConditionSqlNode
 {
   int             left_is_attr;    ///< TRUE if left-hand side is an attribute
-                                   ///< 1时，操作符左边是属性名，0时，是属性值
   Value           left_value;      ///< left-hand side value if left_is_attr = FALSE
   RelAttrSqlNode  left_attr;       ///< left-hand side attribute
   CompOp          comp;            ///< comparison operator
   int             right_is_attr;   ///< TRUE if right-hand side is an attribute
-                                   ///< 1时，操作符右边是属性名，0时，是属性值
   RelAttrSqlNode  right_attr;      ///< right-hand side attribute if right_is_attr = TRUE 右边的属性
   Value           right_value;     ///< right-hand side value if right_is_attr = FALSE
+
+  // 表达式路径: 当非空时，直接使用表达式树，忽略 left_is_attr 等字段
+  Expression     *left_expr = nullptr;
+  Expression     *right_expr = nullptr;
+
+  ConditionSqlNode() = default;
+  ConditionSqlNode(ConditionSqlNode &&other) noexcept
+      : left_is_attr(other.left_is_attr), left_value(std::move(other.left_value)),
+        left_attr(std::move(other.left_attr)), comp(other.comp),
+        right_is_attr(other.right_is_attr), right_attr(std::move(other.right_attr)),
+        right_value(std::move(other.right_value)),
+        left_expr(other.left_expr), right_expr(other.right_expr)
+  {
+    other.left_expr = nullptr;
+    other.right_expr = nullptr;
+  }
+  ConditionSqlNode &operator=(ConditionSqlNode &&other) noexcept
+  {
+    if (this != &other) {
+      delete left_expr; delete right_expr;
+      left_is_attr = other.left_is_attr; left_value = std::move(other.left_value);
+      left_attr = std::move(other.left_attr); comp = other.comp;
+      right_is_attr = other.right_is_attr; right_attr = std::move(other.right_attr);
+      right_value = std::move(other.right_value);
+      left_expr = other.left_expr; right_expr = other.right_expr;
+      other.left_expr = nullptr; other.right_expr = nullptr;
+    }
+    return *this;
+  }
+  ConditionSqlNode(const ConditionSqlNode &) = delete;
+  ConditionSqlNode &operator=(const ConditionSqlNode &) = delete;
+
+  ~ConditionSqlNode();
 };
 
 /**
@@ -111,9 +142,23 @@ struct JoinClauseNode {
   std::vector<ConditionSqlNode>   conditions;
 };
 
+/**
+ * @brief SELECT 中的表达式项
+ * @ingroup SQLParser
+ */
+struct SelectExprNode
+{
+  Expression *expr = nullptr;
+  std::string alias;
+  AggregationType agg_type = AGG_NONE;
+  std::string agg_field;       // 聚合的字段名（仅 agg_type != AGG_NONE 时有效）
+  std::string agg_table;       // 聚合的表名
+};
+
 struct SelectSqlNode
 {
   std::vector<RelAttrSqlNode>     attributes;    ///< attributes in select clause
+  std::vector<SelectExprNode>     expressions;   ///< expression-based select items
   std::vector<std::string>        relations;     ///< 查询的表
   std::vector<ConditionSqlNode>   conditions;    ///< 查询条件，使用AND串联起来多个条件
   std::vector<OrderByNode>        order_by;      ///< order by 字段

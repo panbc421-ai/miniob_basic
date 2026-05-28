@@ -61,9 +61,18 @@ public:
   {
     return filter_stmt_;
   }
+  const std::vector<SelectExprNode> &select_exprs() const
+  {
+    return select_exprs_;
+  }
+  std::vector<SelectExprNode> &select_exprs()
+  {
+    return select_exprs_;
+  }
 
 private:
   std::vector<Field> query_fields_;
+  std::vector<SelectExprNode> select_exprs_;
   std::vector<Table *> tables_;
   FilterStmt *filter_stmt_ = nullptr;
   std::vector<AggregationField> agg_fields_;

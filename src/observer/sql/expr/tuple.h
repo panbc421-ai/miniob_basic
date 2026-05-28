@@ -232,7 +232,7 @@ private:
  * 投影也可以是很复杂的操作，比如某些字段需要做类型转换、重命名、表达式运算、函数计算等。
  * 当前的实现是比较简单的，只是选择部分字段，不做任何其他操作。
  */
-class ProjectTuple : public Tuple 
+class ProjectTuple : public Tuple
 {
 public:
   ProjectTuple() = default;
@@ -253,13 +253,34 @@ public:
   {
     speces_.push_back(spec);
   }
+
+  void set_expressions(const std::vector<std::unique_ptr<Expression>> *expressions)
+  {
+    expressions_ = expressions;
+  }
+
   int cell_num() const override
   {
-    return speces_.size();
+    if (expressions_ && !expressions_->empty()) {
+      return static_cast<int>(expressions_->size());
+    }
+    return static_cast<int>(speces_.size());
   }
 
   RC cell_at(int index, Value &cell) const override
   {
+    // Expression-based path
+    if (expressions_ && !expressions_->empty()) {
+      if (index < 0 || index >= static_cast<int>(expressions_->size())) {
+        return RC::INTERNAL;
+      }
+      if (tuple_ == nullptr) {
+        return RC::INTERNAL;
+      }
+      const Expression *expr = (*expressions_)[index].get();
+      return expr->get_value(*tuple_, cell);
+    }
+    // Legacy field-based path
     if (index < 0 || index >= static_cast<int>(speces_.size())) {
       return RC::INTERNAL;
     }
@@ -273,6 +294,15 @@ public:
 
   RC find_cell(const TupleCellSpec &spec, Value &cell) const override
   {
+    if (expressions_ && !expressions_->empty()) {
+      for (const auto &expr : *expressions_) {
+        if (0 == strcmp(spec.alias(), expr->name().c_str())) {
+          if (tuple_ == nullptr) return RC::INTERNAL;
+          return expr->get_value(*tuple_, cell);
+        }
+      }
+      return RC::NOTFOUND;
+    }
     return tuple_->find_cell(spec, cell);
   }
 
@@ -289,6 +319,7 @@ public:
 private:
   std::vector<TupleCellSpec *> speces_;
   Tuple *tuple_ = nullptr;
+  const std::vector<std::unique_ptr<Expression>> *expressions_ = nullptr;
 };
 
 class ExpressionTuple : public Tuple 

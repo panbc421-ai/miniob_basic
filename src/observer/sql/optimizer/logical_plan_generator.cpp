@@ -37,6 +37,46 @@ See the Mulan PSL v2 for more details. */
 
 using namespace std;
 
+// 从表达式树中收集所有引用的表名
+static void collect_table_refs(Expression *expr, std::set<std::string> &tables)
+{
+  if (expr == nullptr) return;
+  if (expr->type() == ExprType::FIELD) {
+    auto *fe = static_cast<FieldExpr *>(expr);
+    tables.insert(fe->table_name());
+  } else if (expr->type() == ExprType::ARITHMETIC) {
+    auto *ae = static_cast<ArithmeticExpr *>(expr);
+    if (ae->left()) collect_table_refs(ae->left().get(), tables);
+    if (ae->right()) collect_table_refs(ae->right().get(), tables);
+  }
+}
+
+// 深克隆一个表达式树（用于将已解析的表达式从 FilterUnit 复制到 ComparisonExpr）
+static std::unique_ptr<Expression> clone_expr_tree(Expression *e)
+{
+  if (e == nullptr) return nullptr;
+  switch (e->type()) {
+    case ExprType::FIELD: {
+      auto *fe = static_cast<FieldExpr *>(e);
+      return std::unique_ptr<Expression>(new FieldExpr(fe->field()));
+    }
+    case ExprType::VALUE: {
+      Value v;
+      e->try_get_value(v);
+      return std::unique_ptr<Expression>(new ValueExpr(v));
+    }
+    case ExprType::ARITHMETIC: {
+      auto *ae = static_cast<ArithmeticExpr *>(e);
+      auto left = clone_expr_tree(ae->left().get());
+      auto right = clone_expr_tree(ae->right().get());
+      return std::unique_ptr<Expression>(
+          new ArithmeticExpr(ae->arithmetic_type(), std::move(left), std::move(right)));
+    }
+    default:
+      return nullptr;
+  }
+}
+
 RC LogicalPlanGenerator::create(Stmt *stmt, unique_ptr<LogicalOperator> &logical_operator)
 {
   RC rc = RC::SUCCESS;
@@ -92,9 +132,15 @@ RC LogicalPlanGenerator::create_plan(
   std::vector<const FilterUnit *> join_filters;
   std::vector<std::set<std::string>> join_filter_tables;
   std::unordered_map<std::string, std::vector<const FilterUnit *>> table_filters;
+  std::vector<const FilterUnit *> expr_filters;  // 基于表达式的filter
 
   if (filter_stmt != nullptr) {
     for (const FilterUnit *unit : filter_stmt->filter_units()) {
+      // 基于表达式的 filter 稍后统一处理，这里跳过 FilterObj 分类
+      if (unit->is_expr_based()) {
+        expr_filters.push_back(unit);
+        continue;
+      }
       std::string ref_table;
       bool single_table = true;
       std::set<std::string> ref_tables;
@@ -124,11 +170,21 @@ RC LogicalPlanGenerator::create_plan(
 
   std::set<std::string> joined_tables;
 
+  // 当使用表达式select且没有传统字段时，需要扫描所有字段以便表达式求值
+  bool need_all_table_fields = all_fields.empty() && !select_stmt->select_exprs().empty();
+
   for (Table *table : tables) {
     std::vector<Field> fields;
-    for (const Field &field : all_fields) {
-      if (0 == strcmp(field.table_name(), table->name())) {
-        fields.push_back(field);
+    if (need_all_table_fields) {
+      const TableMeta &table_meta = table->table_meta();
+      for (int i = table_meta.sys_field_num(); i < table_meta.field_num(); i++) {
+        fields.push_back(Field(table, table_meta.field(i)));
+      }
+    } else {
+      for (const Field &field : all_fields) {
+        if (0 == strcmp(field.table_name(), table->name())) {
+          fields.push_back(field);
+        }
       }
     }
 
@@ -212,10 +268,11 @@ RC LogicalPlanGenerator::create_plan(
     }
   }
 
-  // Create join-level predicate from remaining filters
+  // Create join-level predicate from remaining filters (legacy + expression-based)
   unique_ptr<LogicalOperator> predicate_oper;
-  if (!join_filters.empty()) {
+  if (!join_filters.empty() || !expr_filters.empty()) {
     std::vector<unique_ptr<Expression>> cmp_exprs;
+    // Legacy join filters (FilterObj based)
     for (const FilterUnit *unit : join_filters) {
       auto make_expr = [](const FilterObj &obj) -> unique_ptr<Expression> {
         if (obj.is_attr) {
@@ -227,11 +284,36 @@ RC LogicalPlanGenerator::create_plan(
       ComparisonExpr *cmp = new ComparisonExpr(unit->comp(), make_expr(unit->left()), make_expr(unit->right()));
       cmp_exprs.emplace_back(cmp);
     }
+    // Expression-based filters (clone the resolved expression trees)
+    for (const FilterUnit *unit : expr_filters) {
+      auto left = clone_expr_tree(unit->left_expr());
+      auto right = clone_expr_tree(unit->right_expr());
+      ComparisonExpr *cmp = new ComparisonExpr(unit->comp(), std::move(left), std::move(right));
+      cmp_exprs.emplace_back(cmp);
+    }
     unique_ptr<ConjunctionExpr> conj(new ConjunctionExpr(ConjunctionExpr::Type::AND, cmp_exprs));
     predicate_oper = unique_ptr<PredicateLogicalOperator>(new PredicateLogicalOperator(std::move(conj)));
   }
 
   unique_ptr<LogicalOperator> project_oper(new ProjectLogicalOperator(all_fields));
+
+  // 将基于表达式的select items转移到project算子
+  auto &select_exprs_ref = select_stmt->select_exprs();
+  if (!select_exprs_ref.empty()) {
+    auto &proj_exprs = static_cast<ProjectLogicalOperator *>(project_oper.get())->expressions();
+    // 先将所有 field-based select items 转换为 FieldExpr
+    for (const auto &f : all_fields) {
+      proj_exprs.emplace_back(new FieldExpr(f));
+    }
+    // 再追加复杂表达式
+    for (auto &se : select_exprs_ref) {
+      if (se.expr) {
+        proj_exprs.emplace_back(se.expr);
+        se.expr = nullptr;
+      }
+    }
+  }
+
   if (predicate_oper) {
     if (table_oper) {
       predicate_oper->add_child(std::move(table_oper));

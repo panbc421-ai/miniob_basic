@@ -29,7 +29,7 @@ RC PredicatePhysicalOperator::open(Trx *trx)
     LOG_WARN("predicate operator must has one child");
     return RC::INTERNAL;
   }
-
+  LOG_INFO("PREDICATE OPEN: child type=%d", (int)children_[0]->type());
   return children_[0]->open(trx);
 }
 
@@ -38,7 +38,12 @@ RC PredicatePhysicalOperator::next()
   RC rc = RC::SUCCESS;
   PhysicalOperator *oper = children_.front().get();
 
+  int loop_count = 0;
   while (RC::SUCCESS == (rc = oper->next())) {
+    if (++loop_count > 100) {
+      LOG_ERROR("PREDICATE INFINITE LOOP: %d iterations", loop_count);
+      return RC::INTERNAL;
+    }
     Tuple *tuple = oper->current_tuple();
     if (nullptr == tuple) {
       rc = RC::INTERNAL;
