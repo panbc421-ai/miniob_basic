@@ -127,6 +127,7 @@ struct OrderByNode
 // INNER JOIN 语法辅助结构: 保存 join 子句中收集到的表和 ON 条件
 struct JoinClauseNode {
   std::vector<std::string>        relations;
+  std::vector<std::string>        aliases;     // table aliases (empty = no alias)
   std::vector<ConditionSqlNode>   conditions;
 };
 
@@ -148,6 +149,7 @@ struct SelectSqlNode
   std::vector<RelAttrSqlNode>     attributes;    ///< attributes in select clause
   std::vector<SelectExprNode>     expressions;   ///< expression-based select items
   std::vector<std::string>        relations;     ///< 查询的表
+  std::vector<std::string>        aliases;       ///< 表的别名 (与 relations 一一对应，空串表示无别名)
   std::vector<ConditionSqlNode>   conditions;    ///< 查询条件，使用AND串联起来多个条件
   std::vector<OrderByNode>        order_by;      ///< order by 字段
 };

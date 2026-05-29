@@ -27,6 +27,7 @@ See the Mulan PSL v2 for more details. */
 #include "sql/operator/project_logical_operator.h"
 #include "sql/operator/explain_logical_operator.h"
 
+#include "sql/expr/expression.h"
 #include "sql/stmt/stmt.h"
 #include "sql/stmt/calc_stmt.h"
 #include "sql/stmt/select_stmt.h"
@@ -71,6 +72,11 @@ static std::unique_ptr<Expression> clone_expr_tree(Expression *e)
       auto right = clone_expr_tree(ae->right().get());
       return std::unique_ptr<Expression>(
           new ArithmeticExpr(ae->arithmetic_type(), std::move(left), std::move(right)));
+    }
+    case ExprType::CAST: {
+      auto *ce = static_cast<CastExpr *>(e);
+      auto child = clone_expr_tree(ce->child().get());
+      return std::unique_ptr<Expression>(new CastExpr(std::move(child), ce->value_type()));
     }
     default:
       return nullptr;

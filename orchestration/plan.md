@@ -1,7 +1,7 @@
 # MiniOB 实验调度计划
 
 <!-- ORIGIN_COMMIT: f17186e1a72f747fb36e5ee19981caf9a8c4d81f -->
-<!-- LAST_SYNC: 2026-05-29 -->
+<!-- LAST_SYNC: 2026-05-29 (sync command) -->
 
 ## 回归基线
 
@@ -32,8 +32,8 @@
 |------|------|------|
 | order-by | 10 | ✅ 已完成 |
 | like | 10 | ✅ 已完成 |
-| join-tables | 20 | ❌ 平台0分，需按指导书修复 |
-| expression | 20 | ❌ 平台0分，复杂表达式失败 |
+| join-tables | 20 | 🔄 待验证 (bug fixes: cell_at off-by-one, clone CAST, alias logic) |
+| expression | 20 | ⏳ (sync: 平台0分，复杂表达式失败) |
 | insert | 10 | ⬜ 未实现 |
 | unique | 10 | ⬜ 未实现 |
 | null | 10 | ⬜ 未实现 |
