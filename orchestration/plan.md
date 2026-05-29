@@ -20,7 +20,7 @@
 | 1.6 | like | primary-like | ✅ 已完成 |
 | 1.7 | join-tables | primary-join-tables | ✅ 已完成 |
 | 1.8 | simple-sub-query | primary-simple-sub-query | ❌ 需修复 (platform data mismatch) |
-| 1.9 | function | self-test | ⬜ 自测 |
+| 1.9 | function | self-test | ✅ 已实现 |
 | 1.10 | multi-index | primary-multi-index | ❌ (composite key bug) |
 | 1.11 | unique | primary-unique | ❌ 需修复 (multi-col unique) |
 | 1.12 | null | primary-null | ❌ (storage crash) |
