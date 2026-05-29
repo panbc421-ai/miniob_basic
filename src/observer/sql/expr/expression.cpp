@@ -78,6 +78,10 @@ RC resolve_expression(unique_ptr<Expression> &expr,
       }
       return RC::SUCCESS;
     }
+    case ExprType::CAST: {
+      auto *cast = static_cast<CastExpr *>(expr.get());
+      return resolve_expression(cast->child(), default_table, table_map);
+    }
     default:
       return RC::SUCCESS;
   }

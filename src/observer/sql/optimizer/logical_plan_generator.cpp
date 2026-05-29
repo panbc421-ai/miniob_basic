@@ -42,13 +42,33 @@ using namespace std;
 static void collect_table_refs(Expression *expr, std::set<std::string> &tables)
 {
   if (expr == nullptr) return;
-  if (expr->type() == ExprType::FIELD) {
-    auto *fe = static_cast<FieldExpr *>(expr);
-    tables.insert(fe->table_name());
-  } else if (expr->type() == ExprType::ARITHMETIC) {
-    auto *ae = static_cast<ArithmeticExpr *>(expr);
-    if (ae->left()) collect_table_refs(ae->left().get(), tables);
-    if (ae->right()) collect_table_refs(ae->right().get(), tables);
+  switch (expr->type()) {
+    case ExprType::FIELD: {
+      auto *fe = static_cast<FieldExpr *>(expr);
+      tables.insert(fe->table_name());
+    } break;
+    case ExprType::ARITHMETIC: {
+      auto *ae = static_cast<ArithmeticExpr *>(expr);
+      if (ae->left()) collect_table_refs(ae->left().get(), tables);
+      if (ae->right()) collect_table_refs(ae->right().get(), tables);
+    } break;
+    case ExprType::CAST: {
+      auto *ce = static_cast<CastExpr *>(expr);
+      collect_table_refs(ce->child().get(), tables);
+    } break;
+    case ExprType::COMPARISON: {
+      auto *cmp = static_cast<ComparisonExpr *>(expr);
+      if (cmp->left()) collect_table_refs(cmp->left().get(), tables);
+      if (cmp->right()) collect_table_refs(cmp->right().get(), tables);
+    } break;
+    case ExprType::CONJUNCTION: {
+      auto *conj = static_cast<ConjunctionExpr *>(expr);
+      for (auto &child : conj->children()) {
+        collect_table_refs(child.get(), tables);
+      }
+    } break;
+    default:
+      break;
   }
 }
 
