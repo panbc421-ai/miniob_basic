@@ -82,6 +82,37 @@ RC resolve_expression(unique_ptr<Expression> &expr,
       auto *cast = static_cast<CastExpr *>(expr.get());
       return resolve_expression(cast->child(), default_table, table_map);
     }
+    case ExprType::AGGREGATION: {
+      auto *agg = static_cast<AggregationExpr *>(expr.get());
+      const std::string &table_name = agg->table_name();
+      const std::string &field_name = agg->field_name();
+      if (field_name == "*") {
+        // COUNT(*) — leave as is, resolved later
+        return RC::SUCCESS;
+      }
+      Table *table = nullptr;
+      if (!table_name.empty() && table_map != nullptr) {
+        auto it = table_map->find(table_name);
+        if (it != table_map->end()) table = it->second;
+      }
+      if (table == nullptr) table = default_table;
+      if (table == nullptr) {
+        LOG_WARN("cannot resolve aggregation field %s.%s: no table",
+                 table_name.c_str(), field_name.c_str());
+        return RC::SCHEMA_FIELD_MISSING;
+      }
+      const FieldMeta *fm = table->table_meta().field(field_name.c_str());
+      if (fm == nullptr) {
+        LOG_WARN("no such field %s in table %s",
+                 field_name.c_str(), table->name());
+        return RC::SCHEMA_FIELD_MISSING;
+      }
+      // Replace AggregationExpr with FieldExpr
+      auto *resolved = new FieldExpr(table, fm);
+      resolved->set_name(expr->name());
+      expr.reset(resolved);
+      return RC::SUCCESS;
+    }
     default:
       return RC::SUCCESS;
   }
@@ -132,6 +163,23 @@ RC ValueExpr::get_value(const Tuple &tuple, Value &value) const
 }
 
 /////////////////////////////////////////////////////////////////////////////////
+AggregationExpr::AggregationExpr(AggregationType agg_type, const std::string &table_name, const std::string &field_name)
+    : agg_type_(agg_type), table_name_(table_name), field_name_(field_name)
+{
+  if (field_name == "*") {
+    set_name("count(*)");
+  } else {
+    set_name(field_name);
+  }
+}
+
+RC AggregationExpr::get_value(const Tuple &tuple, Value &value) const
+{
+  // AggregationExpr must be resolved to a FieldExpr before evaluation
+  LOG_WARN("AggregationExpr::get_value called before resolution");
+  return RC::INTERNAL;
+}
+
 CastExpr::CastExpr(unique_ptr<Expression> child, AttrType cast_type)
     : child_(std::move(child)), cast_type_(cast_type)
 {}

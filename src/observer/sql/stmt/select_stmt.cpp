@@ -4,6 +4,69 @@
 #include "common/lang/string.h"
 #include "storage/db/db.h"
 #include "storage/table/table.h"
+#include "sql/expr/expression.h"
+
+// Walk expression tree and collect AggregationExpr nodes, replacing them
+// with FieldExpr references for the aggregation output tuple.
+static void collect_aggregations(Expression *&expr, Table *default_table,
+    std::unordered_map<std::string, Table *> *table_map,
+    std::vector<AggregationField> &agg_fields, bool &has_agg)
+{
+  if (expr == nullptr) return;
+  if (expr->type() == ExprType::AGGREGATION) {
+    auto *agg = static_cast<AggregationExpr *>(expr);
+    has_agg = true;
+    const std::string &tn = agg->table_name();
+    const std::string &fn = agg->field_name();
+    if (fn == "*") {
+      AggregationField af;
+      af.agg_type = AGG_COUNT;
+      af.field_meta = nullptr;
+      af.table = nullptr;
+      af.alias = "count(*)";
+      agg_fields.push_back(af);
+      // Replace with a dummy field that will be resolved by index
+      return;
+    }
+    Table *table = default_table;
+    if (!tn.empty() && table_map != nullptr) {
+      auto it = table_map->find(tn);
+      if (it != table_map->end()) table = it->second;
+    }
+    if (table == nullptr) return;
+    const FieldMeta *fm = table->table_meta().field(fn.c_str());
+    if (fm == nullptr) return;
+    std::string alias = fn;  // use original field name as alias for lookup
+    AggregationField af;
+    af.agg_type = agg->agg_type();
+    af.table = table;
+    af.field_meta = fm;
+    af.alias = alias;
+    agg_fields.push_back(af);
+    // Replace AggregationExpr with FieldExpr
+    auto *fe = new FieldExpr(table, fm);
+    fe->set_name(expr->name());
+    delete expr;
+    expr = fe;
+    return;
+  }
+  if (expr->type() == ExprType::ARITHMETIC) {
+    auto *ae = static_cast<ArithmeticExpr *>(expr);
+    auto &left = const_cast<std::unique_ptr<Expression> &>(ae->left());
+    auto &right = const_cast<std::unique_ptr<Expression> &>(ae->right());
+    Expression *lptr = left.get();
+    Expression *rptr = right.get();
+    collect_aggregations(lptr, default_table, table_map, agg_fields, has_agg);
+    collect_aggregations(rptr, default_table, table_map, agg_fields, has_agg);
+    return;
+  }
+  if (expr->type() == ExprType::CAST) {
+    auto *ce = static_cast<CastExpr *>(expr);
+    Expression *child = ce->child().get();
+    collect_aggregations(child, default_table, table_map, agg_fields, has_agg);
+    return;
+  }
+}
 
 SelectStmt::~SelectStmt()
 {
@@ -187,6 +250,13 @@ RC SelectStmt::create(Db *db, const SelectSqlNode &select_sql, Stmt *&stmt)
         }
         agg_fields.push_back(agg);
         continue;
+      }
+
+      // Extract aggregation functions from expression tree before resolving
+      if (sel_expr.expr != nullptr) {
+        Expression *eptr = sel_expr.expr;
+        collect_aggregations(eptr, default_table, &table_map, agg_fields, has_aggregation);
+        const_cast<SelectSqlNode &>(select_sql).expressions[i].expr = eptr;
       }
 
       std::unique_ptr<Expression> e(sel_expr.expr);

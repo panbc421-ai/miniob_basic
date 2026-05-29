@@ -67,6 +67,10 @@ static void collect_table_refs(Expression *expr, std::set<std::string> &tables)
         collect_table_refs(child.get(), tables);
       }
     } break;
+    case ExprType::AGGREGATION: {
+      auto *agg = static_cast<AggregationExpr *>(expr);
+      if (!agg->table_name().empty()) tables.insert(agg->table_name());
+    } break;
     default:
       break;
   }

@@ -51,6 +51,7 @@ enum class ExprType
   CONJUNCTION,  ///< 多个表达式使用同一种关系(AND或OR)来联结
   ARITHMETIC,   ///< 算术运算
   UNBOUND_FIELD,///< 未绑定的字段引用，需要在stmt阶段解析
+  AGGREGATION,  ///< 聚合函数表达式
 };
 
 /**
@@ -196,10 +197,34 @@ private:
 };
 
 /**
+ * @brief 聚合函数表达式
+ * @ingroup Expression
+ */
+class AggregationExpr : public Expression
+{
+public:
+  AggregationExpr(AggregationType agg_type, const std::string &table_name, const std::string &field_name);
+  virtual ~AggregationExpr() = default;
+
+  ExprType type() const override { return ExprType::AGGREGATION; }
+  RC get_value(const Tuple &tuple, Value &value) const override;
+  AttrType value_type() const override { return UNDEFINED; }
+
+  AggregationType agg_type() const { return agg_type_; }
+  const std::string &table_name() const { return table_name_; }
+  const std::string &field_name() const { return field_name_; }
+
+private:
+  AggregationType agg_type_;
+  std::string table_name_;
+  std::string field_name_;
+};
+
+/**
  * @brief 类型转换表达式
  * @ingroup Expression
  */
-class CastExpr : public Expression 
+class CastExpr : public Expression
 {
 public:
   CastExpr(std::unique_ptr<Expression> child, AttrType cast_type);
