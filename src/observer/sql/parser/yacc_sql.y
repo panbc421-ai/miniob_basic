@@ -160,6 +160,7 @@ ArithmeticExpr *create_arithmetic_expression(ArithmeticExpr::Type type,
   JoinClauseNode *                  join_clause;
   SelectExprNode *                  select_expr;
   std::vector<SelectExprNode> *     select_expr_list;
+  std::vector<std::string> *        string_list;
 }
 
 %token <number> NUMBER
@@ -215,6 +216,7 @@ ArithmeticExpr *create_arithmetic_expression(ArithmeticExpr::Type type,
 %type <join_clause>         join_clause
 %type <rel_attr_list>       group_by_clause
 %type <rel_attr_list>       group_by_list
+%type <string_list>         id_list
 // commands should be a list but I use a single command instead
 %type <sql_node>            commands
 
@@ -310,7 +312,7 @@ desc_table_stmt:
     ;
 
 create_index_stmt:    /*create index 语句的语法解析树*/
-    CREATE UNIQUE INDEX ID ON ID LBRACE ID RBRACE
+    CREATE UNIQUE INDEX ID ON ID LBRACE ID id_list RBRACE
     {
       $$ = new ParsedSqlNode(SCF_CREATE_INDEX);
       CreateIndexSqlNode &create_index = $$->create_index;
@@ -322,7 +324,7 @@ create_index_stmt:    /*create index 语句的语法解析树*/
       free($6);
       free($8);
     }
-    | CREATE INDEX ID ON ID LBRACE ID RBRACE
+    | CREATE INDEX ID ON ID LBRACE ID id_list RBRACE
     {
       $$ = new ParsedSqlNode(SCF_CREATE_INDEX);
       CreateIndexSqlNode &create_index = $$->create_index;
@@ -471,6 +473,22 @@ value_list:
       }
       $$->emplace_back(*$2);
       delete $2;
+    }
+    ;
+id_list:
+    /* empty */
+    {
+      $$ = nullptr;
+    }
+    | COMMA ID id_list
+    {
+      if ($3 != nullptr) {
+        $$ = $3;
+      } else {
+        $$ = new std::vector<std::string>;
+      }
+      $$->emplace_back($2);
+      free($2);
     }
     ;
 value:
