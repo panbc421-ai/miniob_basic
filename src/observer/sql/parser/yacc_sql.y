@@ -124,6 +124,7 @@ ArithmeticExpr *create_arithmetic_expression(ArithmeticExpr::Type type,
         ORDER
         BY
         ASC
+        GROUP
         EQ
         LT
         GT
@@ -211,6 +212,8 @@ ArithmeticExpr *create_arithmetic_expression(ArithmeticExpr::Type type,
 %type <select_expr_list>    select_expr_list
 %type <rel_attr>            agg_expr
 %type <join_clause>         join_clause
+%type <rel_attr_list>       group_by_clause
+%type <rel_attr_list>       group_by_list
 // commands should be a list but I use a single command instead
 %type <sql_node>            commands
 
@@ -493,7 +496,7 @@ update_stmt:      /*  update 语句的语法解析树*/
     }
     ;
 select_stmt:        /*  select 语句的语法解析树*/
-    SELECT select_expr_list FROM ID join_clause where order_by_clause
+    SELECT select_expr_list FROM ID join_clause where group_by_clause order_by_clause
     {
       $$ = new ParsedSqlNode(SCF_SELECT);
       if ($2 != nullptr) {
@@ -520,12 +523,17 @@ select_stmt:        /*  select 语句的语法解析树*/
       }
       if ($7 != nullptr) {
         std::reverse($7->begin(), $7->end());
-        $$->selection.order_by.swap(*$7);
+        $$->selection.group_by.swap(*$7);
         delete $7;
+      }
+      if ($8 != nullptr) {
+        std::reverse($8->begin(), $8->end());
+        $$->selection.order_by.swap(*$8);
+        delete $8;
       }
       free($4);
     }
-    | SELECT select_attr FROM ID join_clause where order_by_clause
+    | SELECT select_attr FROM ID join_clause where group_by_clause order_by_clause
     {
       $$ = new ParsedSqlNode(SCF_SELECT);
       if ($2 != nullptr) {
@@ -551,8 +559,13 @@ select_stmt:        /*  select 语句的语法解析树*/
       }
       if ($7 != nullptr) {
         std::reverse($7->begin(), $7->end());
-        $$->selection.order_by.swap(*$7);
+        $$->selection.group_by.swap(*$7);
         delete $7;
+      }
+      if ($8 != nullptr) {
+        std::reverse($8->begin(), $8->end());
+        $$->selection.order_by.swap(*$8);
+        delete $8;
       }
       free($4);
     }
@@ -805,7 +818,35 @@ where:
       $$ = nullptr;
     }
     | WHERE condition_list {
-      $$ = $2;  
+      $$ = $2;
+    }
+    ;
+group_by_clause:
+    /* empty */
+    {
+      $$ = nullptr;
+    }
+    | GROUP BY group_by_list
+    {
+      $$ = $3;
+    }
+    ;
+group_by_list:
+    rel_attr
+    {
+      $$ = new std::vector<RelAttrSqlNode>;
+      $$->emplace_back(*$1);
+      delete $1;
+    }
+    | rel_attr COMMA group_by_list
+    {
+      if ($3 != nullptr) {
+        $$ = $3;
+      } else {
+        $$ = new std::vector<RelAttrSqlNode>;
+      }
+      $$->emplace_back(*$1);
+      delete $1;
     }
     ;
 condition_list:

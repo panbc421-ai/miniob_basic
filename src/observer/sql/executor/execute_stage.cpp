@@ -69,6 +69,17 @@ RC ExecuteStage::handle_request_with_physical_operator(SQLStageEvent *sql_event)
   SelectStmt *select_stmt = static_cast<SelectStmt *>(stmt);
   
   if (select_stmt->has_aggregation()) {
+    // For GROUP BY queries, output group-by columns first, then aggregation results
+    if (select_stmt->has_group_by()) {
+      bool with_table_name = select_stmt->tables().size() > 1;
+      for (const Field &field : select_stmt->group_by_fields()) {
+        if (with_table_name) {
+          schema.append_cell(field.table_name(), field.field_name());
+        } else {
+          schema.append_cell(field.field_name());
+        }
+      }
+    }
     for (const AggregationField &af : select_stmt->agg_fields()) {
       schema.append_cell(af.alias.c_str());
     }

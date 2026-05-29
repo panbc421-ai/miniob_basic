@@ -41,10 +41,12 @@ public:
   {
     return StmtType::SELECT;
   }
-const std::vector<AggregationField> &agg_fields() const { return agg_fields_; }
-bool has_aggregation() const { return has_aggregation_; }
-const std::vector<OrderByNode> &order_by() const { return order_by_; }
-bool has_order_by() const { return !order_by_.empty(); }
+	const std::vector<AggregationField> &agg_fields() const { return agg_fields_; }
+	bool has_aggregation() const { return has_aggregation_; }
+	const std::vector<Field> &group_by_fields() const { return group_by_fields_; }
+	bool has_group_by() const { return !group_by_fields_.empty(); }
+	const std::vector<OrderByNode> &order_by() const { return order_by_; }
+	bool has_order_by() const { return !order_by_.empty(); }
 public:
   static RC create(Db *db, const SelectSqlNode &select_sql, Stmt *&stmt);
 
@@ -77,5 +79,6 @@ private:
   FilterStmt *filter_stmt_ = nullptr;
   std::vector<AggregationField> agg_fields_;
   bool has_aggregation_ = false;
+  std::vector<Field> group_by_fields_;
   std::vector<OrderByNode> order_by_;
 };

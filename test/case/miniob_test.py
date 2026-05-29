@@ -720,7 +720,8 @@ class TestSuite:
 
     result_file_name = test_case.result_file(self.__test_result_base_dir)
     if self.__report_only:
-      os.rename(result_tmp_file_name, result_file_name)
+      import shutil
+      shutil.copyfile(result_tmp_file_name, result_file_name)
       return True
     else:
       result = self.__compare_files(result_tmp_file_name, result_file_name)

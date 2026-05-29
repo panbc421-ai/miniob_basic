@@ -107,6 +107,7 @@ AVG                                     RETURN_TOKEN(AVG);
 SUM                                     RETURN_TOKEN(SUM);
 FROM                                    RETURN_TOKEN(FROM);
 WHERE                                   RETURN_TOKEN(WHERE);
+GROUP                                   RETURN_TOKEN(GROUP);
 AND                                     RETURN_TOKEN(AND);
 LIKE                                    RETURN_TOKEN(LIKE);
 NOT                                     RETURN_TOKEN(NOT);

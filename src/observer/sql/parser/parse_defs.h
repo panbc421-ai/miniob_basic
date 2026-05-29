@@ -155,6 +155,7 @@ struct SelectSqlNode
   std::vector<std::string>        relations;     ///< 查询的表
   std::vector<std::string>        aliases;       ///< 表的别名 (与 relations 一一对应，空串表示无别名)
   std::vector<ConditionSqlNode>   conditions;    ///< 查询条件，使用AND串联起来多个条件
+  std::vector<RelAttrSqlNode>     group_by;      ///< GROUP BY 字段
   std::vector<OrderByNode>        order_by;      ///< order by 字段
 };
 

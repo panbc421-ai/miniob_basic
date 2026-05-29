@@ -282,9 +282,32 @@ RC SelectStmt::create(Db *db, const SelectSqlNode &select_sql, Stmt *&stmt)
     const_cast<SelectSqlNode &>(select_sql).expressions.clear();
   }
 
-  if (has_aggregation && !query_fields.empty()) {
-    LOG_WARN("cannot mix aggregation and non-aggregation fields");
+  if (has_aggregation && !query_fields.empty() && select_sql.group_by.empty()) {
+    LOG_WARN("cannot mix aggregation and non-aggregation fields without GROUP BY");
     return RC::INVALID_ARGUMENT;
+  }
+
+  // Resolve group_by fields from parsed GROUP BY clause
+  std::vector<Field> group_by_fields;
+  for (const RelAttrSqlNode &gb : select_sql.group_by) {
+    Table *table = default_table;
+    if (!common::is_blank(gb.relation_name.c_str())) {
+      auto iter = table_map.find(gb.relation_name);
+      if (iter == table_map.end()) {
+        LOG_WARN("no such table for GROUP BY: %s", gb.relation_name.c_str());
+        return RC::SCHEMA_TABLE_NOT_EXIST;
+      }
+      table = iter->second;
+    }
+    if (table == nullptr) {
+      return RC::SCHEMA_FIELD_MISSING;
+    }
+    const FieldMeta *field_meta = table->table_meta().field(gb.attribute_name.c_str());
+    if (nullptr == field_meta) {
+      LOG_WARN("no such field for GROUP BY: %s.%s", table->name(), gb.attribute_name.c_str());
+      return RC::SCHEMA_FIELD_MISSING;
+    }
+    group_by_fields.push_back(Field(table, field_meta));
   }
 
   FilterStmt *filter_stmt = nullptr;
@@ -307,6 +330,7 @@ RC SelectStmt::create(Db *db, const SelectSqlNode &select_sql, Stmt *&stmt)
   select_stmt->has_aggregation_ = has_aggregation;
   select_stmt->order_by_ = select_sql.order_by;
   select_stmt->select_exprs_.swap(select_exprs);
+  select_stmt->group_by_fields_.swap(group_by_fields);
   stmt = select_stmt;
   return RC::SUCCESS;
 }

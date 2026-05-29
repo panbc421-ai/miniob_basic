@@ -29,6 +29,7 @@ See the Mulan PSL v2 for more details. */
 #include "event/session_event.h"
 
 #include "sql/operator/aggregation_physical_operator.h"
+#include "sql/operator/group_by_physical_operator.h"
 #include "sql/operator/sort_physical_operator.h"
 #include "sql/stmt/select_stmt.h"
 
@@ -72,19 +73,39 @@ RC OptimizeStage::handle_request(SQLStageEvent *sql_event)
     SelectStmt *select_stmt = static_cast<SelectStmt *>(stmt);
 
     if (select_stmt->has_aggregation()) {
-      AggregationPhysicalOperator *agg_oper =
-          new AggregationPhysicalOperator();
+      if (select_stmt->has_group_by()) {
+        GroupByPhysicalOperator *gb_oper =
+            new GroupByPhysicalOperator();
 
-      for (const AggregationField &af : select_stmt->agg_fields()) {
-        agg_oper->add_aggregation(
-            af.agg_type,
-            af.table,
-            af.field_meta,
-            af.alias);
+        for (const Field &f : select_stmt->group_by_fields()) {
+          gb_oper->add_group_by(f);
+        }
+
+        for (const AggregationField &af : select_stmt->agg_fields()) {
+          gb_oper->add_aggregation(
+              af.agg_type,
+              af.table,
+              af.field_meta,
+              af.alias);
+        }
+
+        gb_oper->add_child(std::move(physical_operator));
+        physical_operator.reset(gb_oper);
+      } else {
+        AggregationPhysicalOperator *agg_oper =
+            new AggregationPhysicalOperator();
+
+        for (const AggregationField &af : select_stmt->agg_fields()) {
+          agg_oper->add_aggregation(
+              af.agg_type,
+              af.table,
+              af.field_meta,
+              af.alias);
+        }
+
+        agg_oper->add_child(std::move(physical_operator));
+        physical_operator.reset(agg_oper);
       }
-
-      agg_oper->add_child(std::move(physical_operator));
-      physical_operator.reset(agg_oper);
     }
 
     if (select_stmt->has_order_by()) {
