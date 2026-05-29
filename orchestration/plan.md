@@ -33,7 +33,7 @@
 | order-by | 10 | ✅ 已完成 |
 | like | 10 | ✅ 已完成 |
 | join-tables | 20 | 🔄 待验证 (bug fixes: cell_at off-by-one, clone CAST, alias logic) |
-| expression | 20 | ⏳ (sync: 平台0分，复杂表达式失败) |
+| expression | 20 | 🔄 待验证 (fix: CAST in resolve_expression + collect_table_refs) |
 | insert | 10 | ⬜ 未实现 |
 | unique | 10 | ⬜ 未实现 |
 | null | 10 | ⬜ 未实现 |
