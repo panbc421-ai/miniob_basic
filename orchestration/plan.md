@@ -1,16 +1,18 @@
 # MiniOB 实验调度计划
 
-<!-- ORIGIN_COMMIT: 40ec7c8b547dd2842089249adc91b7daca65b891 -->
-<!-- LAST_REGRESSION: 2026-05-28, 5/5 passed -->
+<!-- ORIGIN_COMMIT: f17186e1a72f747fb36e5ee19981caf9a8c4d81f -->
+<!-- LAST_SYNC: 2026-05-29 -->
 
 ## 回归基线
 
-| 功能 | 测试文件 | 状态 |
+| 功能 | 测试用例 | 状态 |
 |------|----------|------|
-| AGGREGATION-FUNC | primary-aggregation-func.test | ✅ pass |
-| BASIC DATE | primary-date.test | ✅ pass |
-| DROP TABLE | primary-drop-table.test | ✅ pass |
-| UPDATE | primary-update.test | ✅ pass |
+| basic | basic | ✅ pass |
+| AGGREGATION-FUNC | primary-aggregation-func | ✅ pass |
+| DATE | primary-date | ✅ pass |
+| DROP TABLE | primary-drop-table | ✅ pass |
+| LIKE | primary-like | ✅ pass |
+| ORDER-BY (big-order-by) | primary-order-by | ✅ pass |
 
 ## 必做题
 
@@ -29,13 +31,14 @@
 | 题目 | 分值 | 状态 |
 |------|------|------|
 | order-by | 10 | ✅ 已完成 |
-| join-tables | 20 | ✅ 已完成 |
+| like | 10 | ✅ 已完成 |
+| join-tables | 20 | ❌ 平台0分，需按指导书修复 |
+| expression | 20 | ❌ 平台0分，复杂表达式失败 |
 | insert | 10 | ⬜ 未实现 |
 | unique | 10 | ⬜ 未实现 |
 | null | 10 | ⬜ 未实现 |
 | simple-sub-query | 10 | ⬜ 未实现 |
 | multi-index | 20 | ⬜ 未实现 |
 | text | 20 | ⬜ 未实现 |
-| expression | 20 | ⬜ 未实现 |
 | complex-sub-query | 20 | ⬜ 未实现 |
 | group-by | 20 | ⬜ 未实现 |
