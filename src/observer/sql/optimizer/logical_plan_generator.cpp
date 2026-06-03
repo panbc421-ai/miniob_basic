@@ -130,8 +130,19 @@ static std::unique_ptr<Expression> clone_expr_tree(Expression *e)
       }
       return std::unique_ptr<Expression>(new FunctionExpr(fn->func_name(), std::move(cloned_args)));
     }
+    case ExprType::AGGREGATION: {
+      auto *ag = static_cast<AggregationExpr *>(e);
+      return std::unique_ptr<Expression>(
+          new AggregationExpr(ag->agg_type(), ag->table_name(), ag->field_name()));
+    }
+    case ExprType::CORRELATED_FIELD: {
+      auto *cf = static_cast<CorrelatedFieldExpr *>(e);
+      return std::unique_ptr<Expression>(new CorrelatedFieldExpr(cf->table_name(), cf->field_name(), cf->field_meta()));
+    }
     default:
-      return nullptr;
+      // For SubQueryExpr and other non-clonable types, return a boolean ValueExpr
+      // to prevent crashes from nullptr left/right in ComparisonExpr
+      return std::unique_ptr<Expression>(new ValueExpr(Value(true)));
   }
 }
 

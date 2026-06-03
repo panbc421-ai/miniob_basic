@@ -124,6 +124,7 @@ ArithmeticExpr *create_arithmetic_expression(ArithmeticExpr::Type type,
         ORDER
         BY
         ASC
+        AS
         GROUP
         EQ
         LT
@@ -135,6 +136,8 @@ ArithmeticExpr *create_arithmetic_expression(ArithmeticExpr::Type type,
         EXISTS
         UNIQUE
         NULL_T
+        NULLABLE_T
+        TEXT_T
 
 /** union 中定义各种数据类型，真实生成的代码也是union类型，所以不能有非POD类型的数据 **/
 %union {
@@ -213,6 +216,7 @@ ArithmeticExpr *create_arithmetic_expression(ArithmeticExpr::Type type,
 %type <select_expr>         select_expr_item
 %type <select_expr_list>    select_expr_list
 %type <rel_attr>            agg_expr
+%type <string>              alias_opt
 %type <join_clause>         join_clause
 %type <rel_attr_list>       group_by_clause
 %type <rel_attr_list>       group_by_list
@@ -409,12 +413,30 @@ attr_def:
       $$->nullable = false;
       free($1);
     }
+    | ID type LBRACE number RBRACE NULLABLE_T
+    {
+      $$ = new AttrInfoSqlNode;
+      $$->type = (AttrType)$2;
+      $$->name = $1;
+      $$->length = $4;
+      $$->nullable = true;
+      free($1);
+    }
+    | ID type LBRACE number RBRACE NOT NULLABLE_T
+    {
+      $$ = new AttrInfoSqlNode;
+      $$->type = (AttrType)$2;
+      $$->name = $1;
+      $$->length = $4;
+      $$->nullable = false;
+      free($1);
+    }
     | ID type
     {
       $$ = new AttrInfoSqlNode;
       $$->type = (AttrType)$2;
       $$->name = $1;
-      $$->length = 4;
+      $$->length = ($2 == TEXTS) ? 4096 : 4;
       free($1);
     }
     | ID type NULL_T
@@ -422,7 +444,7 @@ attr_def:
       $$ = new AttrInfoSqlNode;
       $$->type = (AttrType)$2;
       $$->name = $1;
-      $$->length = 4;
+      $$->length = ($2 == TEXTS) ? 4096 : 4;
       $$->nullable = true;
       free($1);
     }
@@ -431,7 +453,25 @@ attr_def:
       $$ = new AttrInfoSqlNode;
       $$->type = (AttrType)$2;
       $$->name = $1;
-      $$->length = 4;
+      $$->length = ($2 == TEXTS) ? 4096 : 4;
+      $$->nullable = false;
+      free($1);
+    }
+    | ID type NULLABLE_T
+    {
+      $$ = new AttrInfoSqlNode;
+      $$->type = (AttrType)$2;
+      $$->name = $1;
+      $$->length = ($2 == TEXTS) ? 4096 : 4;
+      $$->nullable = true;
+      free($1);
+    }
+    | ID type NOT NULLABLE_T
+    {
+      $$ = new AttrInfoSqlNode;
+      $$->type = (AttrType)$2;
+      $$->name = $1;
+      $$->length = ($2 == TEXTS) ? 4096 : 4;
       $$->nullable = false;
       free($1);
     }
@@ -444,6 +484,7 @@ type:
     | STRING_T { $$=CHARS; }
     | FLOAT_T  { $$=FLOATS; }
     | DATE_T   { $$=DATES; }
+    | TEXT_T   { $$=TEXTS; }
     ;
 insert_stmt:        /*insert   语句的语法解析树*/
     INSERT INTO ID VALUES LBRACE value value_list RBRACE 
@@ -521,6 +562,11 @@ value:
   free(tmp);
   free($1);
 }
+    | NULL_T {
+      $$ = new Value();
+      $$->set_null(true);
+      @$ = @1;
+    }
     ;
     
 delete_stmt:    /*  delete 语句的语法解析树*/
@@ -550,79 +596,97 @@ update_stmt:      /*  update 语句的语法解析树*/
       free($4);
     }
     ;
+alias_opt:
+    /* empty */ { $$ = nullptr; }
+    | ID { $$ = $1; }
+    | AS ID { $$ = $2; }
+    ;
+
 select_stmt:        /*  select 语句的语法解析树*/
-    SELECT select_expr_list FROM ID join_clause where group_by_clause order_by_clause
+    SELECT select_expr_list FROM ID alias_opt join_clause where group_by_clause order_by_clause
     {
       $$ = new ParsedSqlNode(SCF_SELECT);
       if ($2 != nullptr) {
         $$->selection.expressions.swap(*$2);
         delete $2;
       }
-      if ($5 != nullptr) {
-        for (auto &r : $5->relations) {
+      if ($6 != nullptr) {
+        for (auto &r : $6->relations) {
           $$->selection.relations.push_back(r);
         }
-        for (auto &c : $5->conditions) {
+        for (auto &c : $6->conditions) {
           $$->selection.conditions.emplace_back(std::move(c));
         }
-        delete $5;
-      }
-      $$->selection.relations.push_back($4);
-      std::reverse($$->selection.relations.begin(), $$->selection.relations.end());
-
-      if ($6 != nullptr) {
-        for (auto &c : *$6) {
-          $$->selection.conditions.emplace_back(std::move(c));
+        for (auto &a : $6->aliases) {
+          $$->selection.aliases.push_back(a);
         }
         delete $6;
       }
+      $$->selection.relations.push_back($4);
+      $$->selection.aliases.push_back($5 ? $5 : "");
+      std::reverse($$->selection.relations.begin(), $$->selection.relations.end());
+      std::reverse($$->selection.aliases.begin(), $$->selection.aliases.end());
+
       if ($7 != nullptr) {
-        std::reverse($7->begin(), $7->end());
-        $$->selection.group_by.swap(*$7);
+        for (auto &c : *$7) {
+          $$->selection.conditions.emplace_back(std::move(c));
+        }
         delete $7;
       }
       if ($8 != nullptr) {
         std::reverse($8->begin(), $8->end());
-        $$->selection.order_by.swap(*$8);
+        $$->selection.group_by.swap(*$8);
         delete $8;
       }
+      if ($9 != nullptr) {
+        std::reverse($9->begin(), $9->end());
+        $$->selection.order_by.swap(*$9);
+        delete $9;
+      }
       free($4);
+      if ($5) free($5);
     }
-    | SELECT select_attr FROM ID join_clause where group_by_clause order_by_clause
+    | SELECT select_attr FROM ID alias_opt join_clause where group_by_clause order_by_clause
     {
       $$ = new ParsedSqlNode(SCF_SELECT);
       if ($2 != nullptr) {
         $$->selection.attributes.swap(*$2);
         delete $2;
       }
-      if ($5 != nullptr) {
-        for (auto &r : $5->relations) {
+      if ($6 != nullptr) {
+        for (auto &r : $6->relations) {
           $$->selection.relations.push_back(r);
         }
-        for (auto &c : $5->conditions) {
+        for (auto &c : $6->conditions) {
           $$->selection.conditions.emplace_back(std::move(c));
         }
-        delete $5;
-      }
-      $$->selection.relations.push_back($4);
-      std::reverse($$->selection.relations.begin(), $$->selection.relations.end());
-      if ($6 != nullptr) {
-        for (auto &c : *$6) {
-          $$->selection.conditions.emplace_back(std::move(c));
+        for (auto &a : $6->aliases) {
+          $$->selection.aliases.push_back(a);
         }
         delete $6;
       }
+      $$->selection.relations.push_back($4);
+      $$->selection.aliases.push_back($5 ? $5 : "");
+      std::reverse($$->selection.relations.begin(), $$->selection.relations.end());
+      std::reverse($$->selection.aliases.begin(), $$->selection.aliases.end());
       if ($7 != nullptr) {
-        std::reverse($7->begin(), $7->end());
-        $$->selection.group_by.swap(*$7);
+        for (auto &c : *$7) {
+          $$->selection.conditions.emplace_back(std::move(c));
+        }
         delete $7;
       }
       if ($8 != nullptr) {
         std::reverse($8->begin(), $8->end());
-        $$->selection.order_by.swap(*$8);
+        $$->selection.group_by.swap(*$8);
         delete $8;
       }
+      if ($9 != nullptr) {
+        std::reverse($9->begin(), $9->end());
+        $$->selection.order_by.swap(*$9);
+        delete $9;
+      }
       free($4);
+      if ($5) free($5);
     }
     ;
 calc_stmt:
@@ -860,24 +924,28 @@ join_clause:
     {
       $$ = new JoinClauseNode;
     }
-    | COMMA ID join_clause
+    | COMMA ID alias_opt join_clause
     {
-      $$ = $3;
+      $$ = $4;
       $$->relations.push_back($2);
+      $$->aliases.push_back($3 ? $3 : "");
       free($2);
+      if ($3) free($3);
     }
-    | INNER JOIN ID ON condition_list join_clause
+    | INNER JOIN ID alias_opt ON condition_list join_clause
     {
-      $$ = $6;
+      $$ = $7;
       $$->relations.push_back($3);
-      if ($5 != nullptr) {
-        std::reverse($5->begin(), $5->end());
-        for (auto &c : *$5) {
+      $$->aliases.push_back($4 ? $4 : "");
+      if ($6 != nullptr) {
+        std::reverse($6->begin(), $6->end());
+        for (auto &c : *$6) {
           $$->conditions.emplace_back(std::move(c));
         }
-        delete $5;
+        delete $6;
       }
       free($3);
+      if ($4) free($4);
     }
     ;
 where:

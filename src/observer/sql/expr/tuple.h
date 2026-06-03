@@ -173,6 +173,23 @@ public:
 
     FieldExpr *field_expr = speces_[index];
     const FieldMeta *field_meta = field_expr->field().meta();
+
+    // Check for NULL value in nullable fields (NULL stored as all-zeros)
+    if (field_meta->nullable()) {
+      const char *data = this->record_->data() + field_meta->offset();
+      bool all_zero = true;
+      for (int i = 0; i < field_meta->len(); i++) {
+        if (data[i] != 0) {
+          all_zero = false;
+          break;
+        }
+      }
+      if (all_zero) {
+        cell.set_null(true);
+        return RC::SUCCESS;
+      }
+    }
+
     cell.set_type(field_meta->type());
     cell.set_data(this->record_->data() + field_meta->offset(), field_meta->len());
     return RC::SUCCESS;

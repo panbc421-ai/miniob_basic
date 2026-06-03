@@ -53,7 +53,21 @@ RC InsertStmt::create(Db *db, const InsertSqlNode &inserts, Stmt *&stmt)
     const FieldMeta *field_meta = table_meta.field((i % field_num) + sys_field_num);
     const AttrType field_type = field_meta->type();
     const AttrType value_type = values[i].attr_type();
-    if (field_type != value_type) {  // TODO try to convert the value type to field type
+    // Skip NULL values for nullable columns
+    if (value_type == NULLS && field_meta->nullable()) {
+      continue;
+    }
+    // Reject NULL values for non-nullable columns
+    if (value_type == NULLS && !field_meta->nullable()) {
+      LOG_WARN("field type mismatch. table=%s, field=%s is not nullable but got NULL",
+          table_name, field_meta->name());
+      return RC::SCHEMA_FIELD_TYPE_MISMATCH;
+    }
+    // Allow CHARS/TEXTS interchangeability
+    bool type_compatible = (field_type == value_type) ||
+        (field_type == TEXTS && value_type == CHARS) ||
+        (field_type == CHARS && value_type == TEXTS);
+    if (!type_compatible) {  // TODO try to convert the value type to field type
       LOG_WARN("field type mismatch. table=%s, field=%s, field type=%d, value_type=%d",
           table_name, field_meta->name(), field_type, value_type);
       return RC::SCHEMA_FIELD_TYPE_MISMATCH;

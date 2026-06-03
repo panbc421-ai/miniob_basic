@@ -22,10 +22,13 @@ See the Mulan PSL v2 for more details. */
 
 using namespace std;
 
+thread_local const Tuple *g_outer_tuple = nullptr;
+
 // 递归解析表达式树中的 UnboundFieldExpr → FieldExpr
 RC resolve_expression(unique_ptr<Expression> &expr,
     Table *default_table,
-    unordered_map<string, Table *> *table_map)
+    unordered_map<string, Table *> *table_map,
+    unordered_map<string, Table *> *outer_table_map)
 {
   if (expr == nullptr) return RC::SUCCESS;
 
@@ -40,6 +43,15 @@ RC resolve_expression(unique_ptr<Expression> &expr,
         auto it = table_map->find(table_name);
         if (it != table_map->end()) table = it->second;
       }
+      // Fallback to outer table_map for correlated subqueries
+      bool is_correlated = false;
+      if (table == nullptr && !table_name.empty() && outer_table_map != nullptr) {
+        auto it = outer_table_map->find(table_name);
+        if (it != outer_table_map->end()) {
+          table = it->second;
+          is_correlated = true;
+        }
+      }
       if (table == nullptr) table = default_table;
       if (table == nullptr) {
         LOG_WARN("cannot resolve field %s.%s: no table",
@@ -52,9 +64,16 @@ RC resolve_expression(unique_ptr<Expression> &expr,
                  field_name.c_str(), table->name());
         return RC::SCHEMA_FIELD_MISSING;
       }
-      auto *resolved = new FieldExpr(table, fm);
-      resolved->set_name(expr->name());
-      expr.reset(resolved);
+      if (is_correlated) {
+        // Create a CorrelatedFieldExpr that reads from outer tuple at runtime
+        auto *cf = new CorrelatedFieldExpr(table_name, field_name, fm);
+        cf->set_name(expr->name());
+        expr.reset(cf);
+      } else {
+        auto *resolved = new FieldExpr(table, fm);
+        resolved->set_name(expr->name());
+        expr.reset(resolved);
+      }
       return RC::SUCCESS;
     }
     case ExprType::ARITHMETIC: {
@@ -173,6 +192,15 @@ RC ValueExpr::get_value(const Tuple &tuple, Value &value) const
   return RC::SUCCESS;
 }
 
+RC CorrelatedFieldExpr::get_value(const Tuple &tuple, Value &value) const
+{
+  if (g_outer_tuple == nullptr) {
+    LOG_WARN("CorrelatedFieldExpr::get_value called without outer tuple context");
+    return RC::INTERNAL;
+  }
+  return g_outer_tuple->find_cell(TupleCellSpec(table_name_.c_str(), field_name_.c_str()), value);
+}
+
 /////////////////////////////////////////////////////////////////////////////////
 AggregationExpr::AggregationExpr(AggregationType agg_type, const std::string &table_name, const std::string &field_name)
     : agg_type_(agg_type), table_name_(table_name), field_name_(field_name)
@@ -264,6 +292,11 @@ static bool is_div_zero_sentinel(const Value &v)
 RC ComparisonExpr::compare_value(const Value &left, const Value &right, bool &result) const
 {
   RC rc = RC::SUCCESS;
+  // NULL semantics: any comparison with NULL returns false (unknown)
+  if (left.is_null() || right.is_null()) {
+    result = false;
+    return rc;
+  }
   int cmp_result = left.compare(right);
   result = false;
   // Division-by-zero sentinel: always false (NULL semantics)

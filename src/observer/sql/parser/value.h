@@ -28,6 +28,8 @@ enum AttrType
   FLOATS,         ///< 浮点数类型(4字节)
   DATES,          ///<日期类型()
   BOOLEANS,       ///< boolean类型，当前不是由parser解析出来的，是程序内部使用的
+  TEXTS,          ///< 文本类型(大字符串)
+  NULLS,          ///< NULL值类型
 };
 
 const char *attr_type_to_string(AttrType type);
@@ -87,6 +89,18 @@ public:
     return attr_type_;
   }
 
+  bool is_null() const
+  {
+    return is_null_;
+  }
+  void set_null(bool val)
+  {
+    is_null_ = val;
+    if (val) {
+      attr_type_ = NULLS;
+    }
+  }
+
 public:
   /**
    * 获取对应的值
@@ -100,6 +114,7 @@ public:
 private:
   AttrType attr_type_ = UNDEFINED;
   int length_ = 0;
+  bool is_null_ = false;
 
   union {
     int int_value_;

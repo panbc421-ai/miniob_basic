@@ -15,6 +15,7 @@ See the Mulan PSL v2 for more details. */
 #pragma once
 
 #include <vector>
+#include <unordered_map>
 #include <memory>
 
 #include "common/rc.h"
@@ -48,7 +49,8 @@ public:
 	const std::vector<OrderByNode> &order_by() const { return order_by_; }
 	bool has_order_by() const { return !order_by_.empty(); }
 public:
-  static RC create(Db *db, const SelectSqlNode &select_sql, Stmt *&stmt);
+  static RC create(Db *db, const SelectSqlNode &select_sql, Stmt *&stmt,
+      std::unordered_map<std::string, Table *> *outer_table_map = nullptr);
 
 public:
   const std::vector<Table *> &tables() const

@@ -30,8 +30,13 @@ RC UpdateExecutor::execute(SQLStageEvent *sql_event)
     return RC::SCHEMA_FIELD_NOT_EXIST;
   }
 
-  if (field_meta->type() != stmt->value().attr_type()) {
-    LOG_WARN("field type mismatch. field=%s", stmt->field_name().c_str());
+  // Allow TEXTS/CHARS interchangeability
+  bool type_compatible = (field_meta->type() == stmt->value().attr_type()) ||
+      (field_meta->type() == TEXTS && stmt->value().attr_type() == CHARS) ||
+      (field_meta->type() == CHARS && stmt->value().attr_type() == TEXTS);
+  if (!type_compatible) {
+    LOG_WARN("field type mismatch. field=%s, field_type=%d, value_type=%d",
+             stmt->field_name().c_str(), field_meta->type(), stmt->value().attr_type());
     return RC::SCHEMA_FIELD_TYPE_MISMATCH;
   }
 

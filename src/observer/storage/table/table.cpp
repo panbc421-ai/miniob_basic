@@ -330,7 +330,21 @@ RC Table::make_record(int value_num, const Value *values, Record &record)
   for (int i = 0; i < value_num; i++) {
     const FieldMeta *field = table_meta_.field(i + normal_field_start_index);
     const Value &value = values[i];
-    if (field->type() != value.attr_type()) {
+    // Handle NULL values
+    if (value.is_null()) {
+      if (!field->nullable()) {
+        LOG_ERROR("Field %s is not nullable but got NULL value. table name=%s",
+                  field->name(), table_meta_.name());
+        return RC::SCHEMA_FIELD_TYPE_MISMATCH;
+      }
+      // Skip type check for NULL values on nullable columns
+      continue;
+    }
+    // Allow CHARS/TEXTS interchangeability (both are string types)
+    bool type_compatible = (field->type() == value.attr_type()) ||
+        (field->type() == TEXTS && value.attr_type() == CHARS) ||
+        (field->type() == CHARS && value.attr_type() == TEXTS);
+    if (!type_compatible && value.attr_type() != NULLS) {
       LOG_ERROR("Invalid value type. table name =%s, field name=%s, type=%d, but given=%d",
                 table_meta_.name(), field->name(), field->type(), value.attr_type());
       return RC::SCHEMA_FIELD_TYPE_MISMATCH;
@@ -340,12 +354,17 @@ RC Table::make_record(int value_num, const Value *values, Record &record)
   // 复制所有字段的值
   int record_size = table_meta_.record_size();
   char *record_data = (char *)malloc(record_size);
+  memset(record_data, 0, record_size);  // Zero-initialize for NULL fields
 
   for (int i = 0; i < value_num; i++) {
     const FieldMeta *field = table_meta_.field(i + normal_field_start_index);
     const Value &value = values[i];
+    if (value.is_null()) {
+      // Leave NULL fields as zero-filled
+      continue;
+    }
     size_t copy_len = field->len();
-    if (field->type() == CHARS) {
+    if (field->type() == CHARS || field->type() == TEXTS) {
       const size_t data_len = value.length();
       if (copy_len > data_len) {
         copy_len = data_len + 1;

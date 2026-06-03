@@ -29,7 +29,8 @@ FilterStmt::~FilterStmt()
 }
 
 RC FilterStmt::create(Db *db, Table *default_table, std::unordered_map<std::string, Table *> *tables,
-    const ConditionSqlNode *conditions, int condition_num, FilterStmt *&stmt)
+    const ConditionSqlNode *conditions, int condition_num, FilterStmt *&stmt,
+    std::unordered_map<std::string, Table *> *outer_table_map)
 {
   RC rc = RC::SUCCESS;
   stmt = nullptr;
@@ -37,7 +38,7 @@ RC FilterStmt::create(Db *db, Table *default_table, std::unordered_map<std::stri
   FilterStmt *tmp_stmt = new FilterStmt();
   for (int i = 0; i < condition_num; i++) {
     FilterUnit *filter_unit = nullptr;
-    rc = create_filter_unit(db, default_table, tables, conditions[i], filter_unit);
+    rc = create_filter_unit(db, default_table, tables, conditions[i], filter_unit, outer_table_map);
     if (rc != RC::SUCCESS) {
       delete tmp_stmt;
       LOG_WARN("failed to create filter unit. condition index=%d", i);
@@ -51,7 +52,8 @@ RC FilterStmt::create(Db *db, Table *default_table, std::unordered_map<std::stri
 }
 
 RC get_table_and_field(Db *db, Table *default_table, std::unordered_map<std::string, Table *> *tables,
-    const RelAttrSqlNode &attr, Table *&table, const FieldMeta *&field)
+    const RelAttrSqlNode &attr, Table *&table, const FieldMeta *&field,
+    std::unordered_map<std::string, Table *> *outer_tables = nullptr)
 {
   if (common::is_blank(attr.relation_name.c_str())) {
     table = default_table;
@@ -62,6 +64,13 @@ RC get_table_and_field(Db *db, Table *default_table, std::unordered_map<std::str
     }
   } else {
     table = db->find_table(attr.relation_name.c_str());
+  }
+  // Fallback to outer table_map for correlated subqueries
+  if (nullptr == table && outer_tables != nullptr) {
+    auto iter = outer_tables->find(attr.relation_name);
+    if (iter != outer_tables->end()) {
+      table = iter->second;
+    }
   }
   if (nullptr == table) {
     LOG_WARN("No such table: attr.relation_name: %s", attr.relation_name.c_str());
@@ -80,12 +89,13 @@ RC get_table_and_field(Db *db, Table *default_table, std::unordered_map<std::str
 // 解析一个表达式侧（left 或 right），如果结果是简单类型则转换为 FilterObj
 static RC resolve_side(Expression *&expr, Table *default_table,
                        std::unordered_map<std::string, Table *> *tables,
-                       FilterObj &obj, bool &is_simple)
+                       FilterObj &obj, bool &is_simple,
+                       std::unordered_map<std::string, Table *> *outer_table_map = nullptr)
 {
   if (expr == nullptr) return RC::SUCCESS;
   std::unique_ptr<Expression> e(expr);
   expr = nullptr; // 转移所有权
-  RC rc = resolve_expression(e, default_table, tables);
+  RC rc = resolve_expression(e, default_table, tables, outer_table_map);
   if (rc != RC::SUCCESS) return rc;
   if (e->type() == ExprType::FIELD) {
     obj.init_attr(static_cast<FieldExpr *>(e.get())->field());
@@ -104,8 +114,54 @@ static RC resolve_side(Expression *&expr, Table *default_table,
   return RC::SUCCESS;
 }
 
+// Helper: check if an expression tree contains any CorrelatedFieldExpr
+static bool has_correlated_field(Expression *e) {
+  if (e == nullptr) return false;
+  if (e->type() == ExprType::CORRELATED_FIELD) return true;
+  if (e->type() == ExprType::ARITHMETIC) {
+    auto *ae = static_cast<ArithmeticExpr *>(e);
+    return has_correlated_field(ae->left().get()) || has_correlated_field(ae->right().get());
+  }
+  if (e->type() == ExprType::COMPARISON) {
+    auto *ce = static_cast<ComparisonExpr *>(e);
+    return has_correlated_field(ce->left().get()) || has_correlated_field(ce->right().get());
+  }
+  if (e->type() == ExprType::CONJUNCTION) {
+    auto *cj = static_cast<ConjunctionExpr *>(e);
+    for (auto &c : cj->children()) {
+      if (has_correlated_field(c.get())) return true;
+    }
+  }
+  if (e->type() == ExprType::CAST) {
+    auto *ct = static_cast<CastExpr *>(e);
+    return has_correlated_field(ct->child().get());
+  }
+  if (e->type() == ExprType::FUNCTION) {
+    auto *fn = static_cast<FunctionExpr *>(e);
+    for (auto &a : fn->args()) {
+      if (has_correlated_field(a.get())) return true;
+    }
+  }
+  return false;
+}
+
+// Lightweight expression wrapper that delegates to a std::function
+namespace {
+class LambdaExpr : public Expression {
+public:
+  using Func = std::function<RC(const Tuple &, Value &)>;
+  LambdaExpr(Func f) : func_(std::move(f)) {}
+  ExprType type() const override { return ExprType::SUBQUERY; }
+  AttrType value_type() const override { return BOOLEANS; }
+  RC get_value(const Tuple &t, Value &v) const override { return func_(t, v); }
+private:
+  Func func_;
+};
+}
+
 RC FilterStmt::create_filter_unit(Db *db, Table *default_table, std::unordered_map<std::string, Table *> *tables,
-    const ConditionSqlNode &condition, FilterUnit *&filter_unit)
+    const ConditionSqlNode &condition, FilterUnit *&filter_unit,
+    std::unordered_map<std::string, Table *> *outer_table_map)
 {
   RC rc = RC::SUCCESS;
 
@@ -125,7 +181,7 @@ if (comp < EQUAL_TO || comp >= NO_OP) {
     if (condition.left_is_attr) {
       Table *table = nullptr;
       const FieldMeta *field = nullptr;
-      rc = get_table_and_field(db, default_table, tables, condition.left_attr, table, field);
+      rc = get_table_and_field(db, default_table, tables, condition.left_attr, table, field, outer_table_map);
       if (rc != RC::SUCCESS) { delete filter_unit; return rc; }
       FilterObj obj; obj.init_attr(Field(table, field));
       filter_unit->set_left(obj);
@@ -136,7 +192,7 @@ if (comp < EQUAL_TO || comp >= NO_OP) {
     if (condition.right_is_attr) {
       Table *table = nullptr;
       const FieldMeta *field = nullptr;
-      rc = get_table_and_field(db, default_table, tables, condition.right_attr, table, field);
+      rc = get_table_and_field(db, default_table, tables, condition.right_attr, table, field, outer_table_map);
       if (rc != RC::SUCCESS) { delete filter_unit; return rc; }
       FilterObj obj; obj.init_attr(Field(table, field));
       filter_unit->set_right(obj);
@@ -152,13 +208,13 @@ if (comp < EQUAL_TO || comp >= NO_OP) {
     // 转移并解析 left
     Expression *left_e = condition.left_expr;
     if (left_e) const_cast<ConditionSqlNode &>(condition).left_expr = nullptr;
-    rc = resolve_side(left_e, default_table, tables, left_obj, left_simple);
+    rc = resolve_side(left_e, default_table, tables, left_obj, left_simple, outer_table_map);
     if (rc != RC::SUCCESS) return rc;
 
     // 转移并解析 right
     Expression *right_e = condition.right_expr;
     if (right_e) const_cast<ConditionSqlNode &>(condition).right_expr = nullptr;
-    rc = resolve_side(right_e, default_table, tables, right_obj, right_simple);
+    rc = resolve_side(right_e, default_table, tables, right_obj, right_simple, outer_table_map);
     if (rc != RC::SUCCESS) { delete left_e; return rc; }
 
     // Check for subquery in right side
@@ -171,15 +227,252 @@ if (comp < EQUAL_TO || comp >= NO_OP) {
       auto *sq = static_cast<SubQueryExpr *>(right_is_subquery ? right_e : left_e);
       auto *other_expr = right_is_subquery ? left_e : right_e;
 
-      // 执行子查询
-      LOG_INFO("subquery: executing subquery, relations count=%d", (int)sq->select_node()->relations.size());
+      // Correlated subquery detection: pass outer query's table_map as outer context
+      // so that references like csq_1.col1 inside the subquery can be resolved
       Stmt *inner_stmt = nullptr;
-      rc = SelectStmt::create(db, *sq->select_node(), inner_stmt);
-      if (rc != RC::SUCCESS) {
-        LOG_ERROR("subquery: failed to create subquery stmt. rc=%s", strrc(rc));
+      rc = SelectStmt::create(db, *sq->select_node(), inner_stmt, tables);
+      if (rc == RC::SCHEMA_TABLE_NOT_EXIST && outer_table_map != nullptr) {
+        // Retry with further outer context if the immediate outer tables aren't enough
+        rc = SelectStmt::create(db, *sq->select_node(), inner_stmt, outer_table_map);
+      }
+      bool is_correlated = false;
+      if (rc == RC::SUCCESS && inner_stmt != nullptr) {
+        auto *sel_stmt = static_cast<SelectStmt *>(inner_stmt);
+        if (sel_stmt->filter_stmt() != nullptr) {
+          for (FilterUnit *fu : sel_stmt->filter_stmt()->filter_units()) {
+            if (has_correlated_field(fu->custom_expr()) ||
+                has_correlated_field(fu->left_expr()) ||
+                has_correlated_field(fu->right_expr())) {
+              is_correlated = true;
+              break;
+            }
+          }
+        }
+        // Also check aggregation expressions for correlated fields
+        if (!is_correlated) {
+          // Subquery without correlation - keep inner_stmt for normal execution
+        }
+      }
+      if (is_correlated && inner_stmt != nullptr) {
+        delete static_cast<SelectStmt *>(inner_stmt);
+        inner_stmt = nullptr;
+      }
+
+      if (is_correlated) {
+        // === Correlated subquery: per-row execution ===
+        // Transfer ownership of the SubQueryExpr to keep the SelectSqlNode alive
+        std::shared_ptr<Expression> subquery_holder(right_is_subquery ? right_e : left_e);
+        if (right_is_subquery) right_e = nullptr; else left_e = nullptr;
+
+        // Copy the outer table map for use at evaluation time
+        std::shared_ptr<std::unordered_map<std::string, Table *>> captured_outer_map;
+        if (outer_table_map != nullptr) {
+          captured_outer_map = std::make_shared<std::unordered_map<std::string, Table *>>(*outer_table_map);
+        }
+
+        // Capture the other side expression for IN/NOT IN comparison
+        std::shared_ptr<Expression> captured_other;
+        if (other_expr != nullptr) {
+          captured_other.reset(other_expr);
+          if (right_is_subquery) left_e = nullptr; else right_e = nullptr;
+        }
+        // Use the FilterObj from resolution if the other side was simple
+        FilterObj other_obj = right_is_subquery ? left_obj : right_obj;
+
+        auto sq_raw = sq;
+        auto eval_func =
+            [db, sq = sq_raw, sq_holder = subquery_holder, outer_map = captured_outer_map,
+             comp, is_in_op, is_exists_op, right_is_subquery, other_obj,
+             other_expr_ptr = captured_other](
+                const Tuple &outer_tuple, Value &value) mutable -> RC {
+          // Set the outer tuple for CorrelatedFieldExpr evaluation
+          g_outer_tuple = &outer_tuple;
+
+          Stmt *inner = nullptr;
+          RC local_rc = SelectStmt::create(db, *sq->select_node(), inner, outer_map.get());
+          if (local_rc != RC::SUCCESS) {
+            g_outer_tuple = nullptr;
+            value.set_boolean(false);
+            return local_rc;
+          }
+          auto *sel_stmt = static_cast<SelectStmt *>(inner);
+
+          LogicalPlanGenerator logic_gen;
+          std::unique_ptr<LogicalOperator> logic_oper;
+          local_rc = logic_gen.create(sel_stmt, logic_oper);
+          if (local_rc != RC::SUCCESS) {
+            g_outer_tuple = nullptr;
+            delete sel_stmt;
+            value.set_boolean(false);
+            return local_rc;
+          }
+
+          PhysicalPlanGenerator phys_gen;
+          std::unique_ptr<PhysicalOperator> phys_oper;
+          local_rc = phys_gen.create(*logic_oper, phys_oper);
+          if (local_rc != RC::SUCCESS) {
+            g_outer_tuple = nullptr;
+            delete sel_stmt;
+            value.set_boolean(false);
+            return local_rc;
+          }
+
+          if (sel_stmt->has_aggregation()) {
+            auto *agg_oper = new AggregationPhysicalOperator();
+            for (const auto &af : sel_stmt->agg_fields()) {
+              agg_oper->add_aggregation(af.agg_type, af.table, af.field_meta, af.alias);
+            }
+            agg_oper->add_child(std::move(phys_oper));
+            phys_oper.reset(agg_oper);
+          }
+
+          Session *session = Session::current_session();
+          Trx *trx = session ? session->current_trx() : nullptr;
+          local_rc = phys_oper->open(trx);
+          if (local_rc != RC::SUCCESS) {
+            g_outer_tuple = nullptr;
+            delete sel_stmt;
+            value.set_boolean(false);
+            return local_rc;
+          }
+
+          std::vector<Value> result_values;
+          int row_count = 0;
+          while ((local_rc = phys_oper->next()) == RC::SUCCESS) {
+            Tuple *tuple = phys_oper->current_tuple();
+            if (tuple == nullptr) break;
+            row_count++;
+            Value v;
+            local_rc = tuple->cell_at(0, v);
+            if (local_rc == RC::SUCCESS) result_values.push_back(v);
+          }
+          phys_oper->close();
+          delete sel_stmt;
+          g_outer_tuple = nullptr;
+
+          // Apply comparison logic (same as the non-correlated path)
+          if (is_exists_op) {
+            bool has_rows = (row_count > 0);
+            if (comp == EXISTS_OP)
+              value.set_boolean(has_rows);
+            else
+              value.set_boolean(!has_rows);
+            return RC::SUCCESS;
+          }
+
+          if (is_in_op) {
+            auto make_left = [&]() -> std::unique_ptr<Expression> {
+              if (right_is_subquery) {
+                if (other_obj.is_attr)
+                  return std::unique_ptr<Expression>(new FieldExpr(other_obj.field));
+                else
+                  return std::unique_ptr<Expression>(new ValueExpr(other_obj.value));
+              } else {
+                if (other_obj.is_attr)
+                  return std::unique_ptr<Expression>(new FieldExpr(other_obj.field));
+                else
+                  return std::unique_ptr<Expression>(new ValueExpr(other_obj.value));
+              }
+            };
+
+            if (result_values.empty()) {
+              value.set_boolean(comp == NOT_IN);
+            } else if (comp == IN_OP) {
+              bool found = false;
+              for (auto &rv : result_values) {
+                bool eq = false;
+                ComparisonExpr eq_expr(EQUAL_TO, make_left(),
+                    std::unique_ptr<Expression>(new ValueExpr(rv)));
+                eq_expr.get_value(outer_tuple, *(reinterpret_cast<Value *>(&eq)));
+                // Actually we need the correct EQ comparison
+                Value left_val;
+                if (right_is_subquery) {
+                  if (other_obj.is_attr) {
+                    FieldExpr fe(other_obj.field);
+                    fe.get_value(outer_tuple, left_val);
+                  } else {
+                    left_val = other_obj.value;
+                  }
+                } else {
+                  if (other_obj.is_attr) {
+                    FieldExpr fe(other_obj.field);
+                    fe.get_value(outer_tuple, left_val);
+                  } else {
+                    left_val = other_obj.value;
+                  }
+                }
+                eq = (left_val.compare(rv) == 0);
+                if (eq) { found = true; break; }
+              }
+              value.set_boolean(found);
+            } else {
+              bool all_neq = true;
+              for (auto &rv : result_values) {
+                Value left_val;
+                if (right_is_subquery) {
+                  if (other_obj.is_attr) {
+                    FieldExpr fe(other_obj.field);
+                    fe.get_value(outer_tuple, left_val);
+                  } else {
+                    left_val = other_obj.value;
+                  }
+                } else {
+                  if (other_obj.is_attr) {
+                    FieldExpr fe(other_obj.field);
+                    fe.get_value(outer_tuple, left_val);
+                  } else {
+                    left_val = other_obj.value;
+                  }
+                }
+                if (left_val.compare(rv) == 0) { all_neq = false; break; }
+              }
+              value.set_boolean(all_neq);
+            }
+            return RC::SUCCESS;
+          }
+
+          // Scalar subquery
+          if (row_count > 1) { value.set_boolean(false); return RC::SUCCESS; }
+          if (result_values.empty()) { value.set_boolean(false); return RC::SUCCESS; }
+
+          Value scalar_val = result_values[0];
+          Value other_val;
+          if (right_is_subquery) {
+            if (other_obj.is_attr) {
+              FieldExpr fe(other_obj.field);
+              fe.get_value(outer_tuple, other_val);
+            } else {
+              other_val = other_obj.value;
+            }
+          } else {
+            if (other_obj.is_attr) {
+              FieldExpr fe(other_obj.field);
+              fe.get_value(outer_tuple, other_val);
+            } else {
+              other_val = other_obj.value;
+            }
+          }
+          int cmp = other_val.compare(scalar_val);
+          bool result = false;
+          switch (comp) {
+            case EQUAL_TO: result = (cmp == 0); break;
+            case LESS_THAN: result = (cmp < 0); break;
+            case GREAT_THAN: result = (cmp > 0); break;
+            case LESS_EQUAL: result = (cmp <= 0); break;
+            case GREAT_EQUAL: result = (cmp >= 0); break;
+            case NOT_EQUAL: result = (cmp != 0); break;
+            default: break;
+          }
+          value.set_boolean(result);
+          return RC::SUCCESS;
+        };
+
+        filter_unit = new FilterUnit;
+        filter_unit->set_custom_expr(new LambdaExpr(std::move(eval_func)));
         delete left_e; delete right_e;
         return rc;
       }
+
       auto *sel_stmt = static_cast<SelectStmt *>(inner_stmt);
       LOG_INFO("subquery: stmt created, tables=%d", (int)sel_stmt->tables().size());
 
@@ -355,7 +648,69 @@ if (comp < EQUAL_TO || comp >= NO_OP) {
         left_obj.init_value(scalar_val);
       }
 
-      // 回退到正常的表达式路径
+      // Handle the case where BOTH sides are subqueries
+      bool other_is_subquery = (left_is_subquery && right_is_subquery);
+      if (other_is_subquery) {
+        Expression *other_e = right_is_subquery ? left_e : right_e;
+        bool &other_simple = right_is_subquery ? left_simple : right_simple;
+        FilterObj &other_obj = right_is_subquery ? left_obj : right_obj;
+        auto *other_sq = static_cast<SubQueryExpr *>(other_e);
+        Stmt *other_stmt = nullptr;
+        RC other_rc = SelectStmt::create(db, *other_sq->select_node(), other_stmt, outer_table_map);
+        if (other_rc != RC::SUCCESS && outer_table_map == nullptr) {
+          other_rc = SelectStmt::create(db, *other_sq->select_node(), other_stmt);
+        }
+        if (other_rc == RC::SUCCESS) {
+          auto *other_sel = static_cast<SelectStmt *>(other_stmt);
+          LogicalPlanGenerator other_lg;
+          std::unique_ptr<LogicalOperator> other_lo;
+          other_rc = other_lg.create(other_sel, other_lo);
+          if (other_rc == RC::SUCCESS) {
+            PhysicalPlanGenerator other_pg;
+            std::unique_ptr<PhysicalOperator> other_po;
+            other_rc = other_pg.create(*other_lo, other_po);
+            if (other_rc == RC::SUCCESS) {
+              if (other_sel->has_aggregation()) {
+                auto *agg = new AggregationPhysicalOperator();
+                for (const auto &af : other_sel->agg_fields()) {
+                  agg->add_aggregation(af.agg_type, af.table, af.field_meta, af.alias);
+                }
+                agg->add_child(std::move(other_po));
+                other_po.reset(agg);
+              }
+              Session *sess = Session::current_session();
+              Trx *t = sess ? sess->current_trx() : nullptr;
+              other_rc = other_po->open(t);
+              if (other_rc == RC::SUCCESS) {
+                std::vector<Value> other_vals;
+                int other_rows = 0;
+                while (other_po->next() == RC::SUCCESS) {
+                  Tuple *tp = other_po->current_tuple();
+                  if (tp == nullptr) break;
+                  other_rows++;
+                  Value v;
+                  if (tp->cell_at(0, v) == RC::SUCCESS) other_vals.push_back(v);
+                }
+                other_po->close();
+                if (other_rows == 1 && !other_vals.empty()) {
+                  delete other_e;
+                  if (right_is_subquery) {
+                    left_e = new ValueExpr(other_vals[0]);
+                    left_simple = true;
+                    left_obj.init_value(other_vals[0]);
+                  } else {
+                    right_e = new ValueExpr(other_vals[0]);
+                    right_simple = true;
+                    right_obj.init_value(other_vals[0]);
+                  }
+                }
+              }
+            }
+          }
+          delete other_sel;
+        }
+      }
+
       if (left_simple && right_simple) {
         filter_unit = new FilterUnit();
         filter_unit->set_comp(comp);

@@ -20,11 +20,11 @@ See the Mulan PSL v2 for more details. */
 #include "common/lang/string.h"
 #include <cstring>
 
-const char *ATTR_TYPE_NAME[] = {"undefined", "chars", "ints", "floats", "dates", "booleans"};
+const char *ATTR_TYPE_NAME[] = {"undefined", "chars", "ints", "floats", "dates", "booleans", "texts", "nulls"};
 
 const char *attr_type_to_string(AttrType type)
 {
-  if (type >= UNDEFINED && type <= BOOLEANS) {
+  if (type >= UNDEFINED && type <= NULLS) {
     return ATTR_TYPE_NAME[type];
   }
   return "unknown";
@@ -62,7 +62,8 @@ Value::Value(const char *s, int len /*= 0*/)
 void Value::set_data(char *data, int length)
 {
   switch (attr_type_) {
-    case CHARS: {
+    case CHARS:
+    case TEXTS: {
       set_string(data, length);
     } break;
     case INTS: {
@@ -148,6 +149,10 @@ void Value::set_string(const char *s, int len /*= 0*/)
 
 void Value::set_value(const Value &value)
 {
+  if (value.is_null()) {
+    set_null(true);
+    return;
+  }
   switch (value.attr_type_) {
     case INTS: {
       set_int(value.get_int());
@@ -155,7 +160,8 @@ void Value::set_value(const Value &value)
     case FLOATS: {
       set_float(value.get_float());
     } break;
-    case CHARS: {
+    case CHARS:
+    case TEXTS: {
       set_string(value.get_string().c_str());
     } break;
     case DATES: {
@@ -167,14 +173,15 @@ void Value::set_value(const Value &value)
     case UNDEFINED: {
       ASSERT(false, "got an invalid value type");
     } break;
-    
+
   }
 }
 
 const char *Value::data() const
 {
   switch (attr_type_) {
-    case CHARS: {
+    case CHARS:
+    case TEXTS: {
       return str_value_.c_str();
     } break;
     default: {
@@ -185,6 +192,9 @@ const char *Value::data() const
 
 std::string Value::to_string() const
 {
+  if (is_null_) {
+    return "NULL";
+  }
   std::stringstream os;
   switch (attr_type_) {
     case INTS: {
@@ -196,7 +206,8 @@ std::string Value::to_string() const
     case BOOLEANS: {
       os << num_value_.bool_value_;
     } break;
-    case CHARS: {
+    case CHARS:
+    case TEXTS: {
       os << str_value_;
     } break;
     case DATES: {
@@ -216,6 +227,10 @@ std::string Value::to_string() const
 
 int Value::compare(const Value &other) const
 {
+  // NULL comparisons always return -1 (not equal in SQL semantics)
+  if (this->is_null_ || other.is_null_) {
+    return -2; // special value for "unknown"
+  }
   if (this->attr_type_ == other.attr_type_) {
     switch (this->attr_type_) {
       case INTS: {
@@ -224,7 +239,8 @@ int Value::compare(const Value &other) const
       case FLOATS: {
         return common::compare_float((void *)&this->num_value_.float_value_, (void *)&other.num_value_.float_value_);
       } break;
-      case CHARS: {
+      case CHARS:
+      case TEXTS: {
         return common::compare_string((void *)this->str_value_.c_str(),
             this->str_value_.length(),
             (void *)other.str_value_.c_str(),
@@ -246,21 +262,21 @@ int Value::compare(const Value &other) const
   } else if (this->attr_type_ == FLOATS && other.attr_type_ == INTS) {
     float other_data = other.num_value_.int_value_;
     return common::compare_float((void *)&this->num_value_.float_value_, (void *)&other_data);
-  } else if (this->attr_type_ == CHARS && other.attr_type_ == FLOATS) {
+  } else if ((this->attr_type_ == CHARS || this->attr_type_ == TEXTS) && other.attr_type_ == FLOATS) {
     try {
       float this_data = (float)std::stod(this->str_value_);
       return common::compare_float((void *)&this_data, (void *)&other.num_value_.float_value_);
     } catch (...) {
       return -1;
     }
-  } else if (this->attr_type_ == FLOATS && other.attr_type_ == CHARS) {
+  } else if (this->attr_type_ == FLOATS && (other.attr_type_ == CHARS || other.attr_type_ == TEXTS)) {
     try {
       float other_data = (float)std::stod(other.str_value_);
       return common::compare_float((void *)&this->num_value_.float_value_, (void *)&other_data);
     } catch (...) {
       return -1;
     }
-  } else if (this->attr_type_ == CHARS && other.attr_type_ == INTS) {
+  } else if ((this->attr_type_ == CHARS || this->attr_type_ == TEXTS) && other.attr_type_ == INTS) {
     try {
       float this_data = (float)std::stod(this->str_value_);
       float other_data = (float)other.num_value_.int_value_;
@@ -268,7 +284,7 @@ int Value::compare(const Value &other) const
     } catch (...) {
       return -1;
     }
-  } else if (this->attr_type_ == INTS && other.attr_type_ == CHARS) {
+  } else if (this->attr_type_ == INTS && (other.attr_type_ == CHARS || other.attr_type_ == TEXTS)) {
     try {
       float this_data = (float)this->num_value_.int_value_;
       float other_data = (float)std::stod(other.str_value_);
@@ -284,7 +300,8 @@ int Value::compare(const Value &other) const
 int Value::get_int() const
 {
   switch (attr_type_) {
-    case CHARS: {
+    case CHARS:
+    case TEXTS: {
       try {
         return (int)(std::stol(str_value_));
       } catch (std::exception const &ex) {
@@ -301,6 +318,9 @@ int Value::get_int() const
     case BOOLEANS: {
       return (int)(num_value_.bool_value_);
     }
+    case NULLS: {
+      return 0;  // NULL as int is 0
+    }
     default: {
       LOG_WARN("unknown data type. type=%d", attr_type_);
       return 0;
@@ -312,7 +332,8 @@ int Value::get_int() const
 float Value::get_float() const
 {
   switch (attr_type_) {
-    case CHARS: {
+    case CHARS:
+    case TEXTS: {
       try {
         return std::stof(str_value_);
       } catch (std::exception const &ex) {
@@ -332,6 +353,9 @@ float Value::get_float() const
     case BOOLEANS: {
       return float(num_value_.bool_value_);
     } break;
+    case NULLS: {
+      return 0.0;  // NULL as float is 0
+    } break;
     default: {
       LOG_WARN("unknown data type. type=%d", attr_type_);
       return 0;
@@ -342,13 +366,20 @@ float Value::get_float() const
 
 std::string Value::get_string() const
 {
+  if (is_null_) {
+    return "NULL";
+  }
   return this->to_string();
 }
 
 bool Value::get_boolean() const
 {
+  if (is_null_) {
+    return false;  // NULL is falsy in boolean context
+  }
   switch (attr_type_) {
-    case CHARS: {
+    case CHARS:
+    case TEXTS: {
       try {
         float val = std::stof(str_value_);
         if (val >= EPSILON || val <= -EPSILON) {
@@ -375,6 +406,9 @@ bool Value::get_boolean() const
     } break;
     case BOOLEANS: {
       return num_value_.bool_value_;
+    } break;
+    case NULLS: {
+      return false;  // NULL is falsy
     } break;
     default: {
       LOG_WARN("unknown data type. type=%d", attr_type_);

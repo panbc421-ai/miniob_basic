@@ -97,7 +97,8 @@ static void wildcard_fields(Table *table, std::vector<Field> &field_metas)
   }
 }
 
-RC SelectStmt::create(Db *db, const SelectSqlNode &select_sql, Stmt *&stmt)
+RC SelectStmt::create(Db *db, const SelectSqlNode &select_sql, Stmt *&stmt,
+    std::unordered_map<std::string, Table *> *outer_table_map)
 {
   if (nullptr == db) {
     LOG_WARN("invalid argument. db is null");
@@ -119,6 +120,18 @@ RC SelectStmt::create(Db *db, const SelectSqlNode &select_sql, Stmt *&stmt)
     }
     tables.push_back(table);
     table_map.insert(std::pair<std::string, Table *>(table_name, table));
+  }
+
+  // Add alias entries to table_map (alias -> table)
+  for (size_t i = 0; i < select_sql.aliases.size() && i < select_sql.relations.size(); i++) {
+    const std::string &alias = select_sql.aliases[i];
+    if (!alias.empty()) {
+      const std::string &table_name = select_sql.relations[i];
+      auto it = table_map.find(table_name);
+      if (it != table_map.end()) {
+        table_map.insert(std::pair<std::string, Table *>(alias, it->second));
+      }
+    }
   }
 
   Table *default_table = nullptr;
@@ -324,7 +337,8 @@ RC SelectStmt::create(Db *db, const SelectSqlNode &select_sql, Stmt *&stmt)
       &table_map,
       select_sql.conditions.data(),
       static_cast<int>(select_sql.conditions.size()),
-      filter_stmt);
+      filter_stmt,
+      outer_table_map);
   if (rc != RC::SUCCESS) {
     LOG_WARN("cannot construct filter stmt");
     return rc;

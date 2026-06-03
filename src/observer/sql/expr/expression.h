@@ -30,7 +30,11 @@ class Table;
  * @brief 解析表达式树中的 UnboundFieldExpr 为 FieldExpr
  */
 RC resolve_expression(std::unique_ptr<Expression> &expr, Table *default_table,
-    std::unordered_map<std::string, Table *> *table_map);
+    std::unordered_map<std::string, Table *> *table_map,
+    std::unordered_map<std::string, Table *> *outer_table_map = nullptr);
+
+// Thread-local outer tuple for correlated subquery field evaluation.
+extern thread_local const Tuple *g_outer_tuple;
 
 /**
  * @defgroup Expression
@@ -55,6 +59,7 @@ enum class ExprType
   AGGREGATION,  ///< 聚合函数表达式
   SUBQUERY,     ///< 子查询表达式
   FUNCTION,     ///< 函数表达式 (length, round, date_format等)
+  CORRELATED_FIELD,  ///< 相关子查询的外层字段引用
 };
 
 /**
@@ -140,6 +145,35 @@ public:
 
 private:
   Field field_;
+};
+
+/**
+ * @brief 关联子查询的外层字段表达式
+ * @ingroup Expression
+ */
+class CorrelatedFieldExpr : public Expression
+{
+public:
+  CorrelatedFieldExpr(const std::string &table_name, const std::string &field_name,
+                      const FieldMeta *field_meta)
+    : table_name_(table_name), field_name_(field_name), field_meta_(field_meta)
+  {}
+
+  virtual ~CorrelatedFieldExpr() = default;
+
+  ExprType type() const override { return ExprType::CORRELATED_FIELD; }
+  AttrType value_type() const override { return field_meta_->type(); }
+
+  const std::string &table_name() const { return table_name_; }
+  const std::string &field_name() const { return field_name_; }
+  const FieldMeta *field_meta() const { return field_meta_; }
+
+  RC get_value(const Tuple &tuple, Value &value) const override;
+
+private:
+  std::string table_name_;
+  std::string field_name_;
+  const FieldMeta *field_meta_;
 };
 
 /**
