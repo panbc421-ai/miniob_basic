@@ -12,6 +12,7 @@ See the Mulan PSL v2 for more details. */
 // Created by Wangyunlai on 2023/05/04
 //
 
+#include <algorithm>
 #include <inttypes.h>
 #include <random>
 #include <stdexcept>

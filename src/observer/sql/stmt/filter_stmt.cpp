@@ -264,10 +264,17 @@ if (comp < EQUAL_TO || comp >= NO_OP) {
         std::shared_ptr<Expression> subquery_holder(right_is_subquery ? right_e : left_e);
         if (right_is_subquery) right_e = nullptr; else left_e = nullptr;
 
-        // Copy the outer table map for use at evaluation time
-        std::shared_ptr<std::unordered_map<std::string, Table *>> captured_outer_map;
+        // Outer context for correlated fields: current query level (with aliases)
+        // plus any further-out scopes.
+        std::shared_ptr<std::unordered_map<std::string, Table *>> captured_outer_map =
+            std::make_shared<std::unordered_map<std::string, Table *>>();
         if (outer_table_map != nullptr) {
-          captured_outer_map = std::make_shared<std::unordered_map<std::string, Table *>>(*outer_table_map);
+          captured_outer_map->insert(outer_table_map->begin(), outer_table_map->end());
+        }
+        if (tables != nullptr) {
+          for (const auto &kv : *tables) {
+            (*captured_outer_map)[kv.first] = kv.second;
+          }
         }
 
         // Capture the other side expression for IN/NOT IN comparison
@@ -381,10 +388,6 @@ if (comp < EQUAL_TO || comp >= NO_OP) {
               bool found = false;
               for (auto &rv : result_values) {
                 bool eq = false;
-                ComparisonExpr eq_expr(EQUAL_TO, make_left(),
-                    std::unique_ptr<Expression>(new ValueExpr(rv)));
-                eq_expr.get_value(outer_tuple, *(reinterpret_cast<Value *>(&eq)));
-                // Actually we need the correct EQ comparison
                 Value left_val;
                 if (right_is_subquery) {
                   if (other_obj.is_attr) {

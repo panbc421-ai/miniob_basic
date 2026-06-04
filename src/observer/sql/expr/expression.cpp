@@ -65,8 +65,8 @@ RC resolve_expression(unique_ptr<Expression> &expr,
         return RC::SCHEMA_FIELD_MISSING;
       }
       if (is_correlated) {
-        // Create a CorrelatedFieldExpr that reads from outer tuple at runtime
-        auto *cf = new CorrelatedFieldExpr(table_name, field_name, fm);
+        // Use real table name: outer RowTuple matches by table name, not alias
+        auto *cf = new CorrelatedFieldExpr(table->name(), field_name, fm);
         cf->set_name(expr->name());
         expr.reset(cf);
       } else {

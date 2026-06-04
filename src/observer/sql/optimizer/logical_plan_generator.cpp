@@ -146,6 +146,21 @@ static std::unique_ptr<Expression> clone_expr_tree(Expression *e)
   }
 }
 
+// Correlated-subquery runtime predicates use SUBQUERY type but are not SubQueryExpr.
+static void adopt_custom_expr(const FilterUnit *unit, std::vector<std::unique_ptr<Expression>> &cmp_exprs)
+{
+  Expression *e = unit->custom_expr();
+  if (e == nullptr) {
+    return;
+  }
+  if (e->type() == ExprType::SUBQUERY && dynamic_cast<SubQueryExpr *>(e) == nullptr) {
+    cmp_exprs.emplace_back(e);
+    const_cast<FilterUnit *>(unit)->set_custom_expr(nullptr);
+  } else {
+    cmp_exprs.emplace_back(clone_expr_tree(e));
+  }
+}
+
 RC LogicalPlanGenerator::create(Stmt *stmt, unique_ptr<LogicalOperator> &logical_operator)
 {
   RC rc = RC::SUCCESS;
@@ -293,7 +308,7 @@ RC LogicalPlanGenerator::create_plan(
       std::vector<unique_ptr<Expression>> cmp_exprs;
       for (const FilterUnit *unit : it->second) {
         if (unit->has_custom_expr()) {
-          cmp_exprs.emplace_back(clone_expr_tree(unit->custom_expr()));
+          adopt_custom_expr(unit, cmp_exprs);
         } else if (unit->is_expr_based()) {
           auto left  = clone_expr_tree(unit->left_expr());
           auto right = clone_expr_tree(unit->right_expr());
@@ -352,7 +367,7 @@ RC LogicalPlanGenerator::create_plan(
         std::vector<unique_ptr<Expression>> cmp_exprs;
         for (const FilterUnit *unit : covered) {
           if (unit->has_custom_expr()) {
-            cmp_exprs.emplace_back(clone_expr_tree(unit->custom_expr()));
+            adopt_custom_expr(unit, cmp_exprs);
           } else if (unit->is_expr_based()) {
             auto left  = clone_expr_tree(unit->left_expr());
             auto right = clone_expr_tree(unit->right_expr());
@@ -392,7 +407,7 @@ RC LogicalPlanGenerator::create_plan(
     // Expression-based filters (clone the resolved expression trees)
     for (const FilterUnit *unit : expr_filters) {
       if (unit->has_custom_expr()) {
-        cmp_exprs.emplace_back(clone_expr_tree(unit->custom_expr()));
+        adopt_custom_expr(unit, cmp_exprs);
       } else {
         auto left = clone_expr_tree(unit->left_expr());
         auto right = clone_expr_tree(unit->right_expr());
