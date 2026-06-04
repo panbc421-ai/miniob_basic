@@ -1,0 +1,41 @@
+---
+description: Task - develop_next_question
+---
+
+# 题目开发规则
+
+当状态机进入 `pending` 状态时，按以下步骤执行：
+
+1. 读取指导书中对应题目的【题目描述】和【提示】
+2. 根据提示中列出的模块，搜索项目中相关代码文件
+3. 分析现有代码结构，确定需要修改的位置
+4. 按照 MiniOB 火山模型架构实现功能
+5. 执行 `./build.sh` 验证编译
+6. 标记状态为 `submitted` 并触发提交流程
+
+## 架构参考
+
+MiniOB 采用火山模型（Volcano Model），数据自下而上流动：
+
+```
+SQL → Parser → Resolver → Planner → Executor → Result
+                                        ↓
+                              Operator（火山算子树）
+                              ├── ProjectOperator
+                              ├── FilterOperator
+                              ├── JoinOperator
+                              └── TableScanOperator
+```
+
+## 常用文件路径速查
+
+| 层次 | 路径 |
+|------|------|
+| 词法/语法解析 | `src/observer/sql/parser/lex_sql.l` / `yacc_sql.y` |
+| AST 定义 | `src/observer/sql/parser/parse_defs.h` |
+| Stmt 层 | `src/observer/sql/stmt/` |
+| Expression | `src/observer/sql/expr/` |
+| 物理算子 | `src/observer/sql/operator/` |
+| 字段元数据 | `src/observer/storage/field/field_meta.h` |
+| Record 存储 | `src/observer/storage/record/record_manager.cpp` |
+| B+ 树索引 | `src/observer/storage/index/bplus_tree.cpp` |

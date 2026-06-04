@@ -32,5 +32,8 @@ docs/book
 miniob/ 
 data/ 
 result_output/ 
-observer.log.* 
+observer.log.*
+automation/.oceanbase_cookie
+automation/_probe*.json
+automation/_train.js
 ÷∏µº È.pdf 

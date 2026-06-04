@@ -1,0 +1,55 @@
+---
+description: MiniOB AutoPilot 核心规则
+globs: *.*
+alwaysApply: true
+---
+
+# MiniOB AutoPilot 核心规则
+
+## 题目顺序（严格遵守，不可跳题）
+
+| # | 题目名 | 简述 |
+|---|--------|------|
+| 1 | basic | 无需修改代码即可通过 |
+| 2 | date | 日期类型支持 |
+| 3 | drop-table | 删除表功能 |
+| 4 | update | 更新记录 |
+| 5 | aggregation-func | 聚合函数 |
+| 6 | like | LIKE 操作符 |
+| 7 | join-tables | 表连接 |
+| 8 | simple-sub-query | 简单子查询 |
+| 9 | function | 内置函数 |
+| 10 | multi-index | 多字段索引 |
+| 11 | unique | 唯一索引 |
+| 12 | null | NULL 值支持 |
+| 13 | update-select | 更新查询 |
+| 14 | expression | 表达式 |
+| 15 | alias | 别名 |
+| 16 | text | 文本字段 |
+| 17 | order-by | 排序 |
+| 18 | group-by | 分组 |
+| 19 | create-view | 创建视图 |
+| 20 | create-table-select | 复制表 |
+| 21 | complex-sub-query | 复杂子查询 |
+| 22 | update-mvcc | MVCC 更新 |
+| 23 | big-query | 大数据量查询 |
+| 24 | big-write | 大数据量写入 |
+| 25 | big-order-by | 大数据量排序 |
+
+## 提交冷却机制
+
+- 每次提交后 **必须等待 600 秒**，方可再次提交
+- 冷却期内只允许开发和修复代码，**禁止**发起提交
+- 通过页面「提测次数」和「最近提测时间」判断冷却状态
+
+## 提交前置条件
+
+```bash
+git add . && git commit -m "<题目名>: <修改说明>" && git push
+```
+
+push 成功后等待 2 秒，再触发提交。
+
+## 状态文件 `.progress.json`
+
+Agent 启动时读取，记录完成进度。详见 `guides/questions.md`。

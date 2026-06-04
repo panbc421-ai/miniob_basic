@@ -1,0 +1,44 @@
+{
+  "project": "MiniOB AutoPilot",
+  "version": "1.0.0",
+  "start_time": "",
+  "current_question": 1,
+  "questions": [
+    {"id": 1,  "name": "basic",               "status": "pending", "passed_time": null, "retry_count": 0},
+    {"id": 2,  "name": "date",                "status": "pending", "passed_time": null, "retry_count": 0},
+    {"id": 3,  "name": "drop-table",          "status": "pending", "passed_time": null, "retry_count": 0},
+    {"id": 4,  "name": "update",              "status": "pending", "passed_time": null, "retry_count": 0},
+    {"id": 5,  "name": "aggregation-func",    "status": "pending", "passed_time": null, "retry_count": 0},
+    {"id": 6,  "name": "like",                "status": "pending", "passed_time": null, "retry_count": 0},
+    {"id": 7,  "name": "join-tables",         "status": "pending", "passed_time": null, "retry_count": 0},
+    {"id": 8,  "name": "simple-sub-query",    "status": "pending", "passed_time": null, "retry_count": 0},
+    {"id": 9,  "name": "function",            "status": "pending", "passed_time": null, "retry_count": 0},
+    {"id": 10, "name": "multi-index",         "status": "pending", "passed_time": null, "retry_count": 0},
+    {"id": 11, "name": "unique",              "status": "pending", "passed_time": null, "retry_count": 0},
+    {"id": 12, "name": "null",                "status": "pending", "passed_time": null, "retry_count": 0},
+    {"id": 13, "name": "update-select",       "status": "pending", "passed_time": null, "retry_count": 0},
+    {"id": 14, "name": "expression",          "status": "pending", "passed_time": null, "retry_count": 0},
+    {"id": 15, "name": "alias",               "status": "pending", "passed_time": null, "retry_count": 0},
+    {"id": 16, "name": "text",                "status": "pending", "passed_time": null, "retry_count": 0},
+    {"id": 17, "name": "order-by",            "status": "pending", "passed_time": null, "retry_count": 0},
+    {"id": 18, "name": "group-by",            "status": "pending", "passed_time": null, "retry_count": 0},
+    {"id": 19, "name": "create-view",         "status": "pending", "passed_time": null, "retry_count": 0},
+    {"id": 20, "name": "create-table-select", "status": "pending", "passed_time": null, "retry_count": 0},
+    {"id": 21, "name": "complex-sub-query",   "status": "pending", "passed_time": null, "retry_count": 0},
+    {"id": 22, "name": "update-mvcc",         "status": "pending", "passed_time": null, "retry_count": 0},
+    {"id": 23, "name": "big-query",           "status": "pending", "passed_time": null, "retry_count": 0},
+    {"id": 24, "name": "big-write",           "status": "pending", "passed_time": null, "retry_count": 0},
+    {"id": 25, "name": "big-order-by",        "status": "pending", "passed_time": null, "retry_count": 0}
+  ],
+  "git": {
+    "repo": "https://github.com/neellygainforthuj330-bot/miniob_basic",
+    "current_branch": "main"
+  },
+  "submission": {
+    "total_attempts": 0,
+    "last_submit_time": null,
+    "next_available_submit_time": null,
+    "last_commit_id": null,
+    "last_result": null
+  }
+}

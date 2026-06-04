@@ -1,0 +1,60 @@
+{
+  "url": "https://www.oceanbase.com/ob/login/mobile?goto=https%3A%2F%2Fopen.oceanbase.com%2Ftrain%2FTestRecord%3FquestionId%3D600004",
+  "cookie": "HMACCOUNT_BFESS=AA5CA061E36F0B68; Hm_lvt_c6b821bb340e61f0d507b9bef3bd4d5b=1780559200; HMACCOUNT=AA5CA061E36F0B68; BAIDUID_BFESS=A3C9DEA90920B79D460300BBB74AE84A:FG=1; AGL_USER_ID=6befe3c8-421c-4e49-98e5-a0eb1fb59fc4; inviteCode=; numberRegisterFlag=; emailRegisterFlag=; orgId=; _ga=GA1.1.2051156072.1780559200; ofx_utm_first_item={\"goto\":\"https://open.oceanbase.com/\",\"platform\":\"direct\",\"priority\":2,\"utm_source\":\"direct\",\"storedTime\":1780559201186}; ob_session_30_9c6e4743-5f3f-42ed-99f5-b2772bdf1e56=9c6e4743-5f3f-42ed-99f5-b2772bdf1e56.1780559199830.1780561001911; ofx_session_key=badf6414-1deb-4008-ae9a-11e32ae63305; receive-cookie-deprecation=1; _CHIPS-locale=zh_CN; locale=zh_CN; ofx_utm_last_item={\"questionId\":\"600004\",\"platform\":\"direct\",\"priority\":2,\"utm_source\":\"direct\",\"storedTime\":1780559212011}; acw_tc=76b20f4717805592119441511e7c4c9169466a99fbcb8bf44c57f1c45166c2; acw_tc=3ccdc15f17805592119041210e80423421aa3cc659af4ada84e850107b13bf; spanner=SIP1GaE43nGeoFrYEheit3lZPPvzTc7r; Hm_lpvt_c6b821bb340e61f0d507b9bef3bd4d5b=1780559216; spanner=kRvxrqeGkWUeGEt8AMLJQPb5B/Lblcp34EJoL7C0n0A=; ob_session_30_badf6414-1deb-4008-ae9a-11e32ae63305=badf6414-1deb-4008-ae9a-11e32ae63305.1780559216295.1780561016476; _ga_T35KTM57DZ=GS2.1.s1780559200$o1$g1$t1780559217$j43$l0$h0",
+  "api_calls": [
+    {
+      "method": "GET",
+      "url": "https://webapi.oceanbase.com/api/user",
+      "headers": {
+        "sec-ch-ua-platform": "\"Windows\"",
+        "referer": "https://open.oceanbase.com/train/TestRecord?questionId=600004",
+        "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/148.0.7778.96 Safari/537.36",
+        "sec-ch-ua": "\"Chromium\";v=\"148\", \"HeadlessChrome\";v=\"148\", \"Not/A)Brand\";v=\"99\"",
+        "accept-language": "zh-CN",
+        "sec-ch-ua-mobile": "?0"
+      },
+      "post": null
+    },
+    {
+      "method": "GET",
+      "url": "https://webapi.oceanbase.com/api/user",
+      "headers": {
+        "sec-ch-ua-platform": "\"Windows\"",
+        "referer": "https://open.oceanbase.com/train/TestRecord?questionId=600004",
+        "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/148.0.7778.96 Safari/537.36",
+        "sec-ch-ua": "\"Chromium\";v=\"148\", \"HeadlessChrome\";v=\"148\", \"Not/A)Brand\";v=\"99\"",
+        "accept-language": "zh-CN",
+        "sec-ch-ua-mobile": "?0"
+      },
+      "post": null
+    },
+    {
+      "method": "POST",
+      "url": "https://openwebapi.oceanbase.com/api/integral/userIntegral/queryIntegral",
+      "headers": {
+        "sec-ch-ua-platform": "\"Windows\"",
+        "referer": "https://open.oceanbase.com/train/TestRecord?questionId=600004",
+        "accept-language": "zh-CN",
+        "sec-ch-ua": "\"Chromium\";v=\"148\", \"HeadlessChrome\";v=\"148\", \"Not/A)Brand\";v=\"99\"",
+        "sec-ch-ua-mobile": "?0",
+        "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/148.0.7778.96 Safari/537.36",
+        "accept": "application/json",
+        "content-type": "application/json; charset=utf-8"
+      },
+      "post": "{}"
+    },
+    {
+      "method": "GET",
+      "url": "https://webapi.oceanbase.com/api/user",
+      "headers": {
+        "sec-ch-ua-platform": "\"Windows\"",
+        "referer": "https://open.oceanbase.com/train/TestRecord?questionId=600004",
+        "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/148.0.7778.96 Safari/537.36",
+        "sec-ch-ua": "\"Chromium\";v=\"148\", \"HeadlessChrome\";v=\"148\", \"Not/A)Brand\";v=\"99\"",
+        "accept-language": "zh-CN",
+        "sec-ch-ua-mobile": "?0"
+      },
+      "post": null
+    }
+  ]
+}

@@ -2,6 +2,7 @@
 
 # readlink -f cannot work on mac
 TOPDIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+TOPDIR="${TOPDIR//$'\r'/}"
 
 BUILD_SH=$TOPDIR/build.sh
 
@@ -62,23 +63,18 @@ function try_make
   fi
 }
 
-# create build directory and cd it.
-function prepare_build_dir
-{
-  TYPE=$1
-  mkdir -p $TOPDIR/build_$TYPE && cd $TOPDIR/build_$TYPE
-}
-
 function do_init
 {
+  set -e
   git submodule update --init || return
   current_dir=$PWD
 
   MAKE_COMMAND="make --silent"
 
   # build libevent
-  cd ${TOPDIR}/deps/3rd/libevent && \
+  cd "${TOPDIR}/deps/3rd/libevent" && \
     git checkout release-2.1.12-stable && \
+    rm -rf build && \
     mkdir -p build && \
     cd build && \
     ${CMAKE_COMMAND} .. -DEVENT__DISABLE_OPENSSL=ON -DEVENT__LIBRARY_TYPE=BOTH && \
@@ -86,7 +82,8 @@ function do_init
     make install
 
   # build googletest
-  cd ${TOPDIR}/deps/3rd/googletest && \
+  cd "${TOPDIR}/deps/3rd/googletest" && \
+    rm -rf build && \
     mkdir -p build && \
     cd build && \
     ${CMAKE_COMMAND} .. && \
@@ -94,7 +91,8 @@ function do_init
     ${MAKE_COMMAND} install
 
   # build google benchmark
-  cd ${TOPDIR}/deps/3rd/benchmark && \
+  cd "${TOPDIR}/deps/3rd/benchmark" && \
+    rm -rf build && \
     mkdir -p build && \
     cd build && \
     ${CMAKE_COMMAND} .. -DBENCHMARK_ENABLE_TESTING=OFF  -DBENCHMARK_INSTALL_DOCS=OFF -DBENCHMARK_ENABLE_GTEST_TESTS=OFF -DBENCHMARK_USE_BUNDLED_GTEST=OFF -DBENCHMARK_ENABLE_ASSEMBLY_TESTS=OFF && \
@@ -102,7 +100,8 @@ function do_init
     ${MAKE_COMMAND} install
 
   # build jsoncpp
-  cd ${TOPDIR}/deps/3rd/jsoncpp && \
+  cd "${TOPDIR}/deps/3rd/jsoncpp" && \
+    rm -rf build && \
     mkdir -p build && \
     cd build && \
     ${CMAKE_COMMAND} -DJSONCPP_WITH_TESTS=OFF -DJSONCPP_WITH_POST_BUILD_UNITTEST=OFF .. && \
@@ -115,11 +114,16 @@ function do_init
 function prepare_build_dir
 {
   TYPE=$1
-  mkdir -p ${TOPDIR}/build_${TYPE}
-  rm -f build
+  mkdir -p "${TOPDIR}/build_${TYPE}"
+  cd "${TOPDIR}"
+  if [ -e build ] && [ ! -L build ]; then
+    rm -rf build
+  else
+    rm -f build
+  fi
   echo "create soft link for build_${TYPE}, linked by directory named build"
-  ln -s build_${TYPE} build
-  cd ${TOPDIR}/build_${TYPE}
+  ln -sfn build_${TYPE} build
+  cd "${TOPDIR}/build_${TYPE}"
 }
 
 function do_build
