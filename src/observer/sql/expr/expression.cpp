@@ -78,31 +78,31 @@ RC resolve_expression(unique_ptr<Expression> &expr,
     }
     case ExprType::ARITHMETIC: {
       auto *arith = static_cast<ArithmeticExpr *>(expr.get());
-      RC rc = resolve_expression(arith->left(), default_table, table_map);
+      RC rc = resolve_expression(arith->left(), default_table, table_map, outer_table_map);
       if (rc != RC::SUCCESS) return rc;
       if (arith->right()) {
-        rc = resolve_expression(arith->right(), default_table, table_map);
+        rc = resolve_expression(arith->right(), default_table, table_map, outer_table_map);
         if (rc != RC::SUCCESS) return rc;
       }
       return RC::SUCCESS;
     }
     case ExprType::COMPARISON: {
       auto *cmp = static_cast<ComparisonExpr *>(expr.get());
-      RC rc = resolve_expression(cmp->left(), default_table, table_map);
+      RC rc = resolve_expression(cmp->left(), default_table, table_map, outer_table_map);
       if (rc != RC::SUCCESS) return rc;
-      return resolve_expression(cmp->right(), default_table, table_map);
+      return resolve_expression(cmp->right(), default_table, table_map, outer_table_map);
     }
     case ExprType::CONJUNCTION: {
       auto *conj = static_cast<ConjunctionExpr *>(expr.get());
       for (auto &child : conj->children()) {
-        RC rc = resolve_expression(child, default_table, table_map);
+        RC rc = resolve_expression(child, default_table, table_map, outer_table_map);
         if (rc != RC::SUCCESS) return rc;
       }
       return RC::SUCCESS;
     }
     case ExprType::CAST: {
       auto *cast = static_cast<CastExpr *>(expr.get());
-      return resolve_expression(cast->child(), default_table, table_map);
+      return resolve_expression(cast->child(), default_table, table_map, outer_table_map);
     }
     case ExprType::AGGREGATION: {
       auto *agg = static_cast<AggregationExpr *>(expr.get());
@@ -138,7 +138,7 @@ RC resolve_expression(unique_ptr<Expression> &expr,
     case ExprType::FUNCTION: {
       auto *fn = static_cast<FunctionExpr *>(expr.get());
       for (auto &arg : fn->args()) {
-        RC rc = resolve_expression(arg, default_table, table_map);
+        RC rc = resolve_expression(arg, default_table, table_map, outer_table_map);
         if (rc != RC::SUCCESS) return rc;
       }
       return RC::SUCCESS;

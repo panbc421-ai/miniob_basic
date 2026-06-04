@@ -20,6 +20,92 @@ See the Mulan PSL v2 for more details. */
 #include "storage/table/table.h"
 #include "session/session.h"
 
+#include <set>
+
+// Collect inner-query table / alias names from parsed SELECT (read-only).
+static void collect_inner_table_names(const SelectSqlNode &sel, std::set<std::string> &inner)
+{
+  for (size_t i = 0; i < sel.relations.size(); i++) {
+    inner.insert(sel.relations[i]);
+    if (i < sel.aliases.size() && !sel.aliases[i].empty()) {
+      inner.insert(sel.aliases[i]);
+    }
+  }
+}
+
+// Whether an unresolved expression references a table from the outer scope.
+static bool expr_refs_outer_scope(Expression *expr, const std::set<std::string> &inner,
+    const std::unordered_map<std::string, Table *> *outer_tables)
+{
+  if (expr == nullptr || outer_tables == nullptr) {
+    return false;
+  }
+  switch (expr->type()) {
+    case ExprType::UNBOUND_FIELD: {
+      const auto *uf = static_cast<UnboundFieldExpr *>(expr);
+      const std::string &tn = uf->table_name();
+      if (tn.empty()) {
+        return false;
+      }
+      return inner.find(tn) == inner.end() && outer_tables->find(tn) != outer_tables->end();
+    }
+    case ExprType::CORRELATED_FIELD:
+      return true;
+    case ExprType::ARITHMETIC: {
+      auto *ae = static_cast<ArithmeticExpr *>(expr);
+      return expr_refs_outer_scope(ae->left().get(), inner, outer_tables) ||
+             (ae->right() != nullptr && expr_refs_outer_scope(ae->right().get(), inner, outer_tables));
+    }
+    case ExprType::COMPARISON: {
+      auto *ce = static_cast<ComparisonExpr *>(expr);
+      return expr_refs_outer_scope(ce->left().get(), inner, outer_tables) ||
+             expr_refs_outer_scope(ce->right().get(), inner, outer_tables);
+    }
+    case ExprType::CONJUNCTION: {
+      auto *cj = static_cast<ConjunctionExpr *>(expr);
+      for (auto &c : cj->children()) {
+        if (expr_refs_outer_scope(c.get(), inner, outer_tables)) {
+          return true;
+        }
+      }
+      return false;
+    }
+    case ExprType::CAST: {
+      auto *ct = static_cast<CastExpr *>(expr);
+      return expr_refs_outer_scope(ct->child().get(), inner, outer_tables);
+    }
+    case ExprType::FUNCTION: {
+      auto *fn = static_cast<FunctionExpr *>(expr);
+      for (auto &a : fn->args()) {
+        if (expr_refs_outer_scope(a.get(), inner, outer_tables)) {
+          return true;
+        }
+      }
+      return false;
+    }
+    default:
+      return false;
+  }
+}
+
+// Detect correlation without building Stmt (SelectStmt::create mutates SelectSqlNode).
+static bool select_node_has_correlation(const SelectSqlNode &sel,
+    const std::unordered_map<std::string, Table *> *outer_tables)
+{
+  if (outer_tables == nullptr || outer_tables->empty()) {
+    return false;
+  }
+  std::set<std::string> inner;
+  collect_inner_table_names(sel, inner);
+  for (const ConditionSqlNode &cond : sel.conditions) {
+    if (expr_refs_outer_scope(cond.left_expr, inner, outer_tables) ||
+        expr_refs_outer_scope(cond.right_expr, inner, outer_tables)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 FilterStmt::~FilterStmt()
 {
   for (FilterUnit *unit : filter_units_) {
@@ -227,35 +313,27 @@ if (comp < EQUAL_TO || comp >= NO_OP) {
       auto *sq = static_cast<SubQueryExpr *>(right_is_subquery ? right_e : left_e);
       auto *other_expr = right_is_subquery ? left_e : right_e;
 
-      // Correlated subquery detection: pass outer query's table_map as outer context
-      // so that references like csq_1.col1 inside the subquery can be resolved
+      // Detect correlation on the parse tree only. Do NOT call SelectStmt::create here:
+      // it consumes/moves condition expressions and would break per-row re-execution.
+      std::unordered_map<std::string, Table *> merged_outer;
+      if (outer_table_map != nullptr) {
+        merged_outer.insert(outer_table_map->begin(), outer_table_map->end());
+      }
+      if (tables != nullptr) {
+        for (const auto &kv : *tables) {
+          merged_outer[kv.first] = kv.second;
+        }
+      }
+      const std::unordered_map<std::string, Table *> *detect_outer =
+          merged_outer.empty() ? nullptr : &merged_outer;
+      bool is_correlated = select_node_has_correlation(*sq->select_node(), detect_outer);
+
       Stmt *inner_stmt = nullptr;
-      rc = SelectStmt::create(db, *sq->select_node(), inner_stmt, tables);
-      if (rc == RC::SCHEMA_TABLE_NOT_EXIST && outer_table_map != nullptr) {
-        // Retry with further outer context if the immediate outer tables aren't enough
-        rc = SelectStmt::create(db, *sq->select_node(), inner_stmt, outer_table_map);
-      }
-      bool is_correlated = false;
-      if (rc == RC::SUCCESS && inner_stmt != nullptr) {
-        auto *sel_stmt = static_cast<SelectStmt *>(inner_stmt);
-        if (sel_stmt->filter_stmt() != nullptr) {
-          for (FilterUnit *fu : sel_stmt->filter_stmt()->filter_units()) {
-            if (has_correlated_field(fu->custom_expr()) ||
-                has_correlated_field(fu->left_expr()) ||
-                has_correlated_field(fu->right_expr())) {
-              is_correlated = true;
-              break;
-            }
-          }
+      if (!is_correlated) {
+        rc = SelectStmt::create(db, *sq->select_node(), inner_stmt, tables);
+        if (rc == RC::SCHEMA_TABLE_NOT_EXIST && outer_table_map != nullptr) {
+          rc = SelectStmt::create(db, *sq->select_node(), inner_stmt, outer_table_map);
         }
-        // Also check aggregation expressions for correlated fields
-        if (!is_correlated) {
-          // Subquery without correlation - keep inner_stmt for normal execution
-        }
-      }
-      if (is_correlated && inner_stmt != nullptr) {
-        delete static_cast<SelectStmt *>(inner_stmt);
-        inner_stmt = nullptr;
       }
 
       if (is_correlated) {
