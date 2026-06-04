@@ -58,6 +58,7 @@ enum class ExprType
   UNBOUND_FIELD,///< 未绑定的字段引用，需要在stmt阶段解析
   AGGREGATION,  ///< 聚合函数表达式
   SUBQUERY,     ///< 子查询表达式
+  IN_LIST,      ///< IN (v1, v2, ...) 常量列表
   FUNCTION,     ///< 函数表达式 (length, round, date_format等)
   CORRELATED_FIELD,  ///< 相关子查询的外层字段引用
 };
@@ -263,6 +264,25 @@ struct SelectSqlNode;
  * @brief 子查询表达式
  * @ingroup Expression
  */
+/**
+ * @brief IN (v1, v2, ...) 常量列表表达式
+ */
+class InListExpr : public Expression
+{
+public:
+  explicit InListExpr(std::vector<Value> &&values) : values_(std::move(values)) {}
+  virtual ~InListExpr() = default;
+
+  ExprType type() const override { return ExprType::IN_LIST; }
+  AttrType value_type() const override { return UNDEFINED; }
+  RC get_value(const Tuple &tuple, Value &value) const override;
+
+  const std::vector<Value> &values() const { return values_; }
+
+private:
+  std::vector<Value> values_;
+};
+
 class SubQueryExpr : public Expression
 {
 public:

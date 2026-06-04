@@ -630,6 +630,14 @@ RC FunctionExpr::get_value(const Tuple &tuple, Value &value) const
 
 ////////////////////////////////////////////////////////////////////////////////
 
+RC InListExpr::get_value(const Tuple &tuple, Value &value) const
+{
+  (void)tuple;
+  (void)value;
+  LOG_WARN("InListExpr::get_value called — should have been resolved during filter creation");
+  return RC::INTERNAL;
+}
+
 SubQueryExpr::SubQueryExpr(SelectSqlNode *select_node)
     : select_node_(select_node)
 {

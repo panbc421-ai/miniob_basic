@@ -419,8 +419,96 @@ if (comp < EQUAL_TO || comp >= NO_OP) {
     // Check for subquery in right side
     bool right_is_subquery = (right_e != nullptr && right_e->type() == ExprType::SUBQUERY);
     bool left_is_subquery  = (left_e  != nullptr && left_e->type()  == ExprType::SUBQUERY);
+    bool right_is_inlist   = (right_e != nullptr && right_e->type() == ExprType::IN_LIST);
+    bool left_is_inlist    = (left_e  != nullptr && left_e->type()  == ExprType::IN_LIST);
     bool is_in_op    = (comp == IN_OP || comp == NOT_IN);
     bool is_exists_op = (comp == EXISTS_OP || comp == NOT_EXISTS);
+
+    if (is_in_op && (right_is_inlist || left_is_inlist)) {
+      auto *inlist = static_cast<InListExpr *>(right_is_inlist ? right_e : left_e);
+      const std::vector<Value> &result_values = inlist->values();
+      const FilterObj &other_obj = right_is_inlist ? left_obj : right_obj;
+      Expression *other_e = right_is_inlist ? left_e : right_e;
+      bool other_simple = right_is_inlist ? left_simple : right_simple;
+
+      if (!other_simple && other_e != nullptr) {
+        Expression *captured = other_e;
+        if (right_is_inlist) {
+          right_e = nullptr;
+        } else {
+          left_e = nullptr;
+        }
+        std::vector<Value> vals = result_values;
+        CompOp in_comp = comp;
+        filter_unit = new FilterUnit;
+        filter_unit->set_custom_expr(new LambdaExpr(
+            [captured, vals, in_comp](const Tuple &t, Value &out) -> RC {
+              Value left_val;
+              RC local_rc = captured->get_value(t, left_val);
+              if (local_rc != RC::SUCCESS) {
+                return local_rc;
+              }
+              if (vals.empty()) {
+                out.set_boolean(in_comp == NOT_IN);
+                return RC::SUCCESS;
+              }
+              if (in_comp == IN_OP) {
+                bool found = false;
+                for (const auto &rv : vals) {
+                  if (left_val.compare(rv) == 0) {
+                    found = true;
+                    break;
+                  }
+                }
+                out.set_boolean(found);
+              } else {
+                bool all_neq = true;
+                for (const auto &rv : vals) {
+                  if (left_val.compare(rv) == 0) {
+                    all_neq = false;
+                    break;
+                  }
+                }
+                out.set_boolean(all_neq);
+              }
+              return RC::SUCCESS;
+            }));
+        delete left_e;
+        delete right_e;
+        return rc;
+      }
+
+      auto make_left_expr = [&]() -> std::unique_ptr<Expression> {
+        if (other_obj.is_attr) {
+          return std::unique_ptr<Expression>(new FieldExpr(other_obj.field));
+        }
+        return std::unique_ptr<Expression>(new ValueExpr(other_obj.value));
+      };
+
+      if (result_values.empty()) {
+        filter_unit = new FilterUnit;
+        filter_unit->set_custom_expr(new ValueExpr(Value(comp == NOT_IN)));
+      } else if (comp == IN_OP) {
+        std::vector<std::unique_ptr<Expression>> or_children;
+        for (const auto &rv : result_values) {
+          or_children.emplace_back(
+              new ComparisonExpr(EQUAL_TO, make_left_expr(), std::unique_ptr<Expression>(new ValueExpr(rv))));
+        }
+        filter_unit = new FilterUnit;
+        filter_unit->set_custom_expr(new ConjunctionExpr(ConjunctionExpr::Type::OR, or_children));
+      } else {
+        std::vector<std::unique_ptr<Expression>> and_children;
+        for (const auto &rv : result_values) {
+          and_children.emplace_back(
+              new ComparisonExpr(NOT_EQUAL, make_left_expr(), std::unique_ptr<Expression>(new ValueExpr(rv))));
+        }
+        filter_unit = new FilterUnit;
+        filter_unit->set_custom_expr(new ConjunctionExpr(ConjunctionExpr::Type::AND, and_children));
+      }
+      delete left_e;
+      delete right_e;
+      return rc;
+    }
 
     if (right_is_subquery || left_is_subquery) {
       auto *sq = static_cast<SubQueryExpr *>(right_is_subquery ? right_e : left_e);

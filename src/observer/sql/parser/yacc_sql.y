@@ -1030,6 +1030,36 @@ condition:
       $$->comp = NOT_LIKE;
       delete $4;
     }
+    | expression IN LBRACE value value_list RBRACE
+    {
+      std::vector<Value> values;
+      if ($5 != nullptr) {
+        values.swap(*$5);
+        delete $5;
+      }
+      values.emplace_back(*$4);
+      std::reverse(values.begin(), values.end());
+      $$ = new ConditionSqlNode;
+      $$->left_expr = $1;
+      $$->right_expr = new InListExpr(std::move(values));
+      $$->comp = IN_OP;
+      delete $4;
+    }
+    | expression NOT IN LBRACE value value_list RBRACE
+    {
+      std::vector<Value> values;
+      if ($6 != nullptr) {
+        values.swap(*$6);
+        delete $6;
+      }
+      values.emplace_back(*$5);
+      std::reverse(values.begin(), values.end());
+      $$ = new ConditionSqlNode;
+      $$->left_expr = $1;
+      $$->right_expr = new InListExpr(std::move(values));
+      $$->comp = NOT_IN;
+      delete $5;
+    }
     | expression IN LBRACE select_stmt RBRACE
     {
       auto *sel = new SelectSqlNode;
