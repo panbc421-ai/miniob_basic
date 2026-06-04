@@ -20,6 +20,7 @@ See the Mulan PSL v2 for more details. */
 #include "storage/table/table.h"
 #include "session/session.h"
 
+#include <memory>
 #include <set>
 
 // Collect inner-query table / alias names from parsed SELECT (read-only).
@@ -215,7 +216,7 @@ static SelectSqlNode clone_select_sql_node(const SelectSqlNode &src)
     }
     dst.expressions.emplace_back(std::move(copy));
   }
-  return dst;
+  return std::move(dst);
 }
 
 FilterStmt::~FilterStmt()
@@ -477,7 +478,8 @@ if (comp < EQUAL_TO || comp >= NO_OP) {
         FilterObj other_obj = right_is_subquery ? left_obj : right_obj;
 
         // Keep an immutable snapshot; SelectStmt::create mutates the parse tree.
-        SelectSqlNode select_template = clone_select_sql_node(*sq->select_node());
+        auto select_template =
+            std::make_shared<SelectSqlNode>(clone_select_sql_node(*sq->select_node()));
 
         auto eval_func =
             [db, select_template, sq_holder = subquery_holder, outer_map = captured_outer_map,
@@ -487,7 +489,7 @@ if (comp < EQUAL_TO || comp >= NO_OP) {
           // Set the outer tuple for CorrelatedFieldExpr evaluation
           g_outer_tuple = &outer_tuple;
 
-          SelectSqlNode sel_copy = clone_select_sql_node(select_template);
+          SelectSqlNode sel_copy = clone_select_sql_node(*select_template);
           Stmt *inner = nullptr;
           RC local_rc = SelectStmt::create(db, sel_copy, inner, outer_map.get());
           if (local_rc != RC::SUCCESS) {

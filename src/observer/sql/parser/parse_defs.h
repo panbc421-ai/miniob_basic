@@ -157,6 +157,12 @@ struct SelectSqlNode
   std::vector<ConditionSqlNode>   conditions;    ///< 查询条件，使用AND串联起来多个条件
   std::vector<RelAttrSqlNode>     group_by;      ///< GROUP BY 字段
   std::vector<OrderByNode>        order_by;      ///< order by 字段
+
+  SelectSqlNode() = default;
+  SelectSqlNode(SelectSqlNode &&) = default;
+  SelectSqlNode &operator=(SelectSqlNode &&) = default;
+  SelectSqlNode(const SelectSqlNode &) = delete;
+  SelectSqlNode &operator=(const SelectSqlNode &) = delete;
 };
 
 /**
@@ -246,10 +252,11 @@ struct DropTableSqlNode
  */
 struct CreateIndexSqlNode
 {
-  std::string index_name;      ///< Index name
-  std::string relation_name;   ///< Relation name
-  std::string attribute_name;  ///< Attribute name
-  bool        is_unique = false; ///< Whether this is a unique index
+  std::string              index_name;       ///< Index name
+  std::string              relation_name;    ///< Relation name
+  std::string              attribute_name;   ///< First attribute name (backward compat)
+  std::vector<std::string> attribute_names;  ///< All indexed attributes in order
+  bool                     is_unique = false; ///< Whether this is a unique index
 };
 
 /**

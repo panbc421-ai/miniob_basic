@@ -323,6 +323,12 @@ create_index_stmt:    /*create index 语句的语法解析树*/
       create_index.index_name = $4;
       create_index.relation_name = $6;
       create_index.attribute_name = $8;
+      create_index.attribute_names.push_back($8);
+      if ($9 != nullptr) {
+        create_index.attribute_names.insert(
+            create_index.attribute_names.end(), $9->begin(), $9->end());
+        delete $9;
+      }
       create_index.is_unique = true;
       free($4);
       free($6);
@@ -335,6 +341,12 @@ create_index_stmt:    /*create index 语句的语法解析树*/
       create_index.index_name = $3;
       create_index.relation_name = $5;
       create_index.attribute_name = $7;
+      create_index.attribute_names.push_back($7);
+      if ($8 != nullptr) {
+        create_index.attribute_names.insert(
+            create_index.attribute_names.end(), $8->begin(), $8->end());
+        delete $8;
+      }
       free($3);
       free($5);
       free($7);

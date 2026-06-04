@@ -12,15 +12,18 @@ See the Mulan PSL v2 for more details. */
 // Created by wangyunlai.wyl on 2021/5/19.
 //
 
+#include <vector>
+
 #include "storage/index/bplus_tree_index.h"
 #include "common/log/log.h"
+#include "common/types.h"
 
 BplusTreeIndex::~BplusTreeIndex() noexcept
 {
   close();
 }
 
-RC BplusTreeIndex::create(const char *file_name, const IndexMeta &index_meta, const FieldMeta &field_meta)
+RC BplusTreeIndex::create(const char *file_name, const IndexMeta &index_meta, const std::vector<const FieldMeta *> &field_metas)
 {
   if (inited_) {
     LOG_WARN("Failed to create index due to the index has been created before. file_name:%s, index:%s, field:%s",
@@ -30,9 +33,12 @@ RC BplusTreeIndex::create(const char *file_name, const IndexMeta &index_meta, co
     return RC::RECORD_OPENNED;
   }
 
-  Index::init(index_meta, field_meta);
+  RC rc = Index::init(index_meta, field_metas);
+  if (rc != RC::SUCCESS) {
+    return rc;
+  }
 
-  RC rc = index_handler_.create(file_name, field_meta.type(), field_meta.len());
+  rc = index_handler_.create(file_name, AttrType::CHARS, key_length_);
   if (RC::SUCCESS != rc) {
     LOG_WARN("Failed to create index_handler, file_name:%s, index:%s, field:%s, rc:%s",
         file_name,
@@ -48,7 +54,7 @@ RC BplusTreeIndex::create(const char *file_name, const IndexMeta &index_meta, co
   return RC::SUCCESS;
 }
 
-RC BplusTreeIndex::open(const char *file_name, const IndexMeta &index_meta, const FieldMeta &field_meta)
+RC BplusTreeIndex::open(const char *file_name, const IndexMeta &index_meta, const std::vector<const FieldMeta *> &field_metas)
 {
   if (inited_) {
     LOG_WARN("Failed to open index due to the index has been initedd before. file_name:%s, index:%s, field:%s",
@@ -58,9 +64,12 @@ RC BplusTreeIndex::open(const char *file_name, const IndexMeta &index_meta, cons
     return RC::RECORD_OPENNED;
   }
 
-  Index::init(index_meta, field_meta);
+  RC rc = Index::init(index_meta, field_metas);
+  if (rc != RC::SUCCESS) {
+    return rc;
+  }
 
-  RC rc = index_handler_.open(file_name);
+  rc = index_handler_.open(file_name);
   if (RC::SUCCESS != rc) {
     LOG_WARN("Failed to open index_handler, file_name:%s, index:%s, field:%s, rc:%s",
         file_name,
@@ -89,12 +98,16 @@ RC BplusTreeIndex::close()
 
 RC BplusTreeIndex::insert_entry(const char *record, const RID *rid)
 {
-  return index_handler_.insert_entry(record + field_meta_.offset(), rid);
+  std::vector<char> key(key_length_);
+  build_record_key(record, key.data());
+  return index_handler_.insert_entry(key.data(), rid);
 }
 
 RC BplusTreeIndex::delete_entry(const char *record, const RID *rid)
 {
-  return index_handler_.delete_entry(record + field_meta_.offset(), rid);
+  std::vector<char> key(key_length_);
+  build_record_key(record, key.data());
+  return index_handler_.delete_entry(key.data(), rid);
 }
 
 IndexScanner *BplusTreeIndex::create_scanner(

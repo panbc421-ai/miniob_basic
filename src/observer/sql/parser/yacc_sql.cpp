@@ -1934,6 +1934,12 @@ yyreduce:
       create_index.index_name = (yyvsp[-6].string);
       create_index.relation_name = (yyvsp[-4].string);
       create_index.attribute_name = (yyvsp[-2].string);
+      create_index.attribute_names.push_back((yyvsp[-2].string));
+      if ((yyvsp[-1].id_list) != nullptr) {
+        create_index.attribute_names.insert(
+            create_index.attribute_names.end(), (yyvsp[-1].id_list)->begin(), (yyvsp[-1].id_list)->end());
+        delete (yyvsp[-1].id_list);
+      }
       create_index.is_unique = true;
       free((yyvsp[-6].string));
       free((yyvsp[-4].string));
@@ -1950,6 +1956,12 @@ yyreduce:
       create_index.index_name = (yyvsp[-6].string);
       create_index.relation_name = (yyvsp[-4].string);
       create_index.attribute_name = (yyvsp[-2].string);
+      create_index.attribute_names.push_back((yyvsp[-2].string));
+      if ((yyvsp[-1].id_list) != nullptr) {
+        create_index.attribute_names.insert(
+            create_index.attribute_names.end(), (yyvsp[-1].id_list)->begin(), (yyvsp[-1].id_list)->end());
+        delete (yyvsp[-1].id_list);
+      }
       free((yyvsp[-6].string));
       free((yyvsp[-4].string));
       free((yyvsp[-2].string));
