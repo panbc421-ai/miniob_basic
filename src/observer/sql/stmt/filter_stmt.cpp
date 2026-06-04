@@ -106,6 +106,118 @@ static bool select_node_has_correlation(const SelectSqlNode &sel,
   return false;
 }
 
+// Deep-clone parse-stage expression trees (before SelectStmt::create mutates them).
+static std::unique_ptr<Expression> clone_parse_expression(Expression *expr)
+{
+  if (expr == nullptr) {
+    return nullptr;
+  }
+  switch (expr->type()) {
+    case ExprType::UNBOUND_FIELD: {
+      auto *uf = static_cast<UnboundFieldExpr *>(expr);
+      auto *copy = new UnboundFieldExpr(uf->table_name(), uf->field_name());
+      copy->set_name(expr->name());
+      return std::unique_ptr<Expression>(copy);
+    }
+    case ExprType::VALUE: {
+      Value v;
+      expr->try_get_value(v);
+      auto *copy = new ValueExpr(v);
+      copy->set_name(expr->name());
+      return std::unique_ptr<Expression>(copy);
+    }
+    case ExprType::ARITHMETIC: {
+      auto *ae = static_cast<ArithmeticExpr *>(expr);
+      auto left = clone_parse_expression(ae->left().get());
+      std::unique_ptr<Expression> right;
+      if (ae->right()) {
+        right = clone_parse_expression(ae->right().get());
+      }
+      auto *copy = new ArithmeticExpr(ae->arithmetic_type(), std::move(left), std::move(right));
+      copy->set_name(expr->name());
+      return std::unique_ptr<Expression>(copy);
+    }
+    case ExprType::COMPARISON: {
+      auto *ce = static_cast<ComparisonExpr *>(expr);
+      auto left = clone_parse_expression(ce->left().get());
+      auto right = clone_parse_expression(ce->right().get());
+      auto *copy = new ComparisonExpr(ce->comp(), std::move(left), std::move(right));
+      copy->set_name(expr->name());
+      return std::unique_ptr<Expression>(copy);
+    }
+    case ExprType::CONJUNCTION: {
+      auto *cj = static_cast<ConjunctionExpr *>(expr);
+      std::vector<std::unique_ptr<Expression>> children;
+      for (auto &child : cj->children()) {
+        children.emplace_back(clone_parse_expression(child.get()));
+      }
+      auto *copy = new ConjunctionExpr(cj->conjunction_type(), children);
+      copy->set_name(expr->name());
+      return std::unique_ptr<Expression>(copy);
+    }
+    case ExprType::CAST: {
+      auto *ct = static_cast<CastExpr *>(expr);
+      auto child = clone_parse_expression(ct->child().get());
+      auto *copy = new CastExpr(std::move(child), ct->value_type());
+      copy->set_name(expr->name());
+      return std::unique_ptr<Expression>(copy);
+    }
+    case ExprType::FUNCTION: {
+      auto *fn = static_cast<FunctionExpr *>(expr);
+      std::vector<std::unique_ptr<Expression>> args;
+      for (auto &arg : fn->args()) {
+        args.emplace_back(clone_parse_expression(arg.get()));
+      }
+      auto *copy = new FunctionExpr(fn->func_name(), std::move(args));
+      copy->set_name(expr->name());
+      return std::unique_ptr<Expression>(copy);
+    }
+    default:
+      return nullptr;
+  }
+}
+
+static SelectSqlNode clone_select_sql_node(const SelectSqlNode &src)
+{
+  SelectSqlNode dst;
+  dst.relations = src.relations;
+  dst.aliases = src.aliases;
+  dst.attributes = src.attributes;
+  dst.group_by = src.group_by;
+  dst.order_by = src.order_by;
+
+  for (const ConditionSqlNode &cond : src.conditions) {
+    ConditionSqlNode copy;
+    copy.left_is_attr = cond.left_is_attr;
+    copy.left_attr = cond.left_attr;
+    copy.left_value = cond.left_value;
+    copy.comp = cond.comp;
+    copy.right_is_attr = cond.right_is_attr;
+    copy.right_attr = cond.right_attr;
+    copy.right_value = cond.right_value;
+    if (cond.left_expr != nullptr) {
+      copy.left_expr = clone_parse_expression(cond.left_expr).release();
+    }
+    if (cond.right_expr != nullptr) {
+      copy.right_expr = clone_parse_expression(cond.right_expr).release();
+    }
+    dst.conditions.emplace_back(std::move(copy));
+  }
+
+  for (const SelectExprNode &item : src.expressions) {
+    SelectExprNode copy;
+    copy.alias = item.alias;
+    copy.agg_type = item.agg_type;
+    copy.agg_field = item.agg_field;
+    copy.agg_table = item.agg_table;
+    if (item.expr != nullptr) {
+      copy.expr = clone_parse_expression(item.expr).release();
+    }
+    dst.expressions.emplace_back(std::move(copy));
+  }
+  return dst;
+}
+
 FilterStmt::~FilterStmt()
 {
   for (FilterUnit *unit : filter_units_) {
@@ -364,17 +476,20 @@ if (comp < EQUAL_TO || comp >= NO_OP) {
         // Use the FilterObj from resolution if the other side was simple
         FilterObj other_obj = right_is_subquery ? left_obj : right_obj;
 
-        auto sq_raw = sq;
+        // Keep an immutable snapshot; SelectStmt::create mutates the parse tree.
+        SelectSqlNode select_template = clone_select_sql_node(*sq->select_node());
+
         auto eval_func =
-            [db, sq = sq_raw, sq_holder = subquery_holder, outer_map = captured_outer_map,
+            [db, select_template, sq_holder = subquery_holder, outer_map = captured_outer_map,
              comp, is_in_op, is_exists_op, right_is_subquery, other_obj,
              other_expr_ptr = captured_other](
                 const Tuple &outer_tuple, Value &value) mutable -> RC {
           // Set the outer tuple for CorrelatedFieldExpr evaluation
           g_outer_tuple = &outer_tuple;
 
+          SelectSqlNode sel_copy = clone_select_sql_node(select_template);
           Stmt *inner = nullptr;
-          RC local_rc = SelectStmt::create(db, *sq->select_node(), inner, outer_map.get());
+          RC local_rc = SelectStmt::create(db, sel_copy, inner, outer_map.get());
           if (local_rc != RC::SUCCESS) {
             g_outer_tuple = nullptr;
             value.set_boolean(false);
