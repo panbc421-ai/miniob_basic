@@ -38,7 +38,11 @@ RC BplusTreeIndex::create(const char *file_name, const IndexMeta &index_meta, co
     return rc;
   }
 
-  rc = index_handler_.create(file_name, AttrType::CHARS, key_length_);
+  AttrType key_type = AttrType::CHARS;
+  if (field_metas_.size() == 1) {
+    key_type = field_metas_[0].type();
+  }
+  rc = index_handler_.create(file_name, key_type, key_length_);
   if (RC::SUCCESS != rc) {
     LOG_WARN("Failed to create index_handler, file_name:%s, index:%s, field:%s, rc:%s",
         file_name,
@@ -98,6 +102,9 @@ RC BplusTreeIndex::close()
 
 RC BplusTreeIndex::insert_entry(const char *record, const RID *rid)
 {
+  if (field_metas_.size() == 1) {
+    return index_handler_.insert_entry(record + field_metas_[0].offset(), rid);
+  }
   std::vector<char> key(key_length_);
   build_record_key(record, key.data());
   return index_handler_.insert_entry(key.data(), rid);
@@ -105,6 +112,9 @@ RC BplusTreeIndex::insert_entry(const char *record, const RID *rid)
 
 RC BplusTreeIndex::delete_entry(const char *record, const RID *rid)
 {
+  if (field_metas_.size() == 1) {
+    return index_handler_.delete_entry(record + field_metas_[0].offset(), rid);
+  }
   std::vector<char> key(key_length_);
   build_record_key(record, key.data());
   return index_handler_.delete_entry(key.data(), rid);

@@ -1876,13 +1876,23 @@ RC BplusTreeScanner::fix_user_key(
     return RC::INVALID_ARGUMENT;
   }
 
-  // 这里很粗暴，变长字段才需要做调整，其它默认都不需要做调整
+  // CHARS 类型：变长字符串或定长复合键（key_len == attr_length 时按定长二进制处理）
   assert(tree_handler_.file_header_.attr_type == CHARS);
-  assert(strlen(user_key) >= static_cast<size_t>(key_len));
 
   *should_inclusive = false;
 
   int32_t attr_length = tree_handler_.file_header_.attr_length;
+  if (key_len == attr_length) {
+    char *key_buf = new (std::nothrow) char[attr_length];
+    if (nullptr == key_buf) {
+      return RC::NOMEM;
+    }
+    memcpy(key_buf, user_key, attr_length);
+    *fixed_key = key_buf;
+    return RC::SUCCESS;
+  }
+
+  assert(strlen(user_key) >= static_cast<size_t>(key_len));
   char *key_buf = new (std::nothrow) char[attr_length];
   if (nullptr == key_buf) {
     return RC::NOMEM;
