@@ -4,6 +4,8 @@
 #include "sql/stmt/update_stmt.h"
 #include "sql/stmt/filter_stmt.h"
 #include "sql/stmt/select_stmt.h"
+#include "sql/expr/tuple.h"
+#include "sql/expr/expression.h"
 #include "sql/optimizer/logical_plan_generator.h"
 #include "sql/optimizer/physical_plan_generator.h"
 #include "sql/operator/aggregation_physical_operator.h"
@@ -13,6 +15,66 @@
 #include "common/log/log.h"
 #include "session/session.h"
 #include <vector>
+
+static RC eval_update_filter(FilterStmt *filter_stmt, RowTuple &tuple, bool &match)
+{
+  match = true;
+  if (filter_stmt == nullptr) {
+    return RC::SUCCESS;
+  }
+
+  for (FilterUnit *filter_unit : filter_stmt->filter_units()) {
+    bool cond = false;
+    if (filter_unit->has_custom_expr()) {
+      Value value;
+      RC rc = filter_unit->custom_expr()->get_value(tuple, value);
+      if (rc != RC::SUCCESS) {
+        return rc;
+      }
+      cond = value.get_boolean();
+    } else {
+      Value left_value;
+      Value right_value;
+      RC rc = RC::SUCCESS;
+      if (filter_unit->is_expr_based()) {
+        rc = filter_unit->left_expr()->get_value(tuple, left_value);
+        if (rc == RC::SUCCESS) {
+          rc = filter_unit->right_expr()->get_value(tuple, right_value);
+        }
+      } else {
+        if (filter_unit->left().is_attr) {
+          TupleCellSpec spec(filter_unit->left().field.table_name(), filter_unit->left().field.field_name());
+          rc = tuple.find_cell(spec, left_value);
+        } else {
+          left_value = filter_unit->left().value;
+        }
+        if (rc == RC::SUCCESS) {
+          if (filter_unit->right().is_attr) {
+            TupleCellSpec spec(filter_unit->right().field.table_name(), filter_unit->right().field.field_name());
+            rc = tuple.find_cell(spec, right_value);
+          } else {
+            right_value = filter_unit->right().value;
+          }
+        }
+      }
+      if (rc != RC::SUCCESS) {
+        return rc;
+      }
+      ComparisonExpr cmp(filter_unit->comp(), std::unique_ptr<Expression>(), std::unique_ptr<Expression>());
+      rc = cmp.compare_value(left_value, right_value, cond);
+      if (rc != RC::SUCCESS) {
+        return rc;
+      }
+    }
+
+    if (!cond) {
+      match = false;
+      return RC::SUCCESS;
+    }
+  }
+
+  return RC::SUCCESS;
+}
 
 // Evaluate a non-correlated scalar subquery to a single Value.
 // Returns RC::INVALID_ARGUMENT if the subquery yields more than one row/column.
@@ -142,45 +204,27 @@ RC UpdateExecutor::execute(SQLStageEvent *sql_event)
     return rc;
   }
 
+  std::vector<FieldMeta> row_fields;
+  for (int f = sys_field_num; f < field_num; f++) {
+    row_fields.push_back(*table->table_meta().field(f));
+  }
+
   std::vector<std::pair<RID, std::vector<char>>> records_to_update;
   Record record;
   while (scanner.has_next()) {
     rc = scanner.next(record);
     if (rc != RC::SUCCESS) break;
 
-    if (filter_stmt != nullptr) {
-      bool match = true;
-      for (FilterUnit *filter_unit : filter_stmt->filter_units()) {
-        Value left_value, right_value;
-        if (filter_unit->left().is_attr) {
-          const FieldMeta *left_field = filter_unit->left().field.meta();
-          left_value.set_type(left_field->type());
-          left_value.set_data(record.data() + left_field->offset(), left_field->len());
-        } else {
-          left_value = filter_unit->left().value;
-        }
-        if (filter_unit->right().is_attr) {
-          const FieldMeta *right_field = filter_unit->right().field.meta();
-          right_value.set_type(right_field->type());
-          right_value.set_data(record.data() + right_field->offset(), right_field->len());
-        } else {
-          right_value = filter_unit->right().value;
-        }
-        int cmp = left_value.compare(right_value);
-        bool cond = false;
-        switch (filter_unit->comp()) {
-          case EQUAL_TO: cond = (cmp == 0); break;
-          case LESS_THAN: cond = (cmp < 0); break;
-          case GREAT_THAN: cond = (cmp > 0); break;
-          case LESS_EQUAL: cond = (cmp <= 0); break;
-          case GREAT_EQUAL: cond = (cmp >= 0); break;
-          case NOT_EQUAL: cond = (cmp != 0); break;
-          default: cond = false; break;
-        }
-        if (!cond) { match = false; break; }
-      }
-      if (!match) continue;
+    RowTuple row_tuple;
+    row_tuple.set_record(&record);
+    row_tuple.set_schema(table, &row_fields);
+    bool match = false;
+    rc = eval_update_filter(filter_stmt, row_tuple, match);
+    if (rc != RC::SUCCESS) {
+      scanner.close_scan();
+      return rc;
     }
+    if (!match) continue;
 
     std::vector<char> data_copy(record.data(), record.data() + record_size);
     records_to_update.push_back({record.rid(), data_copy});

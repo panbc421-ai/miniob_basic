@@ -13,12 +13,14 @@ See the Mulan PSL v2 for more details. */
 //
 
 #include <limits.h>
+#include <limits>
 #include <string.h>
 #include <algorithm>
 
 #include "common/defs.h"
 #include "storage/table/table.h"
 #include "storage/table/table_meta.h"
+#include "storage/field/field.h"
 #include "common/log/log.h"
 #include "common/lang/string.h"
 #include "storage/buffer/disk_buffer_pool.h"
@@ -225,7 +227,28 @@ RC Table::insert_record(Record &record)
       IndexScanner *scanner = index->create_scanner(key.data(), index->key_length(), true, key.data(), index->key_length(), true);
       if (scanner != nullptr) {
         RID rid;
-        bool found = (scanner->next_entry(&rid) == RC::SUCCESS);
+        bool found = false;
+        const std::pair<const FieldMeta *, int> trx_fields = table_meta_.trx_fields();
+        Field end_field;
+        if (trx_fields.second >= 2) {
+          end_field.set_table(this);
+          end_field.set_field(&trx_fields.first[1]);
+        }
+        while (scanner->next_entry(&rid) == RC::SUCCESS) {
+          Record existing_record;
+          RC visit_rc = get_record(rid, existing_record);
+          if (visit_rc != RC::SUCCESS) {
+            continue;
+          }
+          if (trx_fields.second >= 2) {
+            int32_t end_xid = end_field.get_int(existing_record);
+            if (end_xid != std::numeric_limits<int32_t>::max()) {
+              continue;
+            }
+          }
+          found = true;
+          break;
+        }
         scanner->destroy();
         if (found) {
           return RC::RECORD_DUPLICATE_KEY;

@@ -62,6 +62,85 @@ static bool split_multi_insert(const char *sql, std::vector<std::string> &out)
 
 int sql_parse(const char *st, ParsedSqlResult *sql_result);
 
+static const char *skip_spaces(const char *p)
+{
+  while (*p && isspace((unsigned char)*p)) {
+    p++;
+  }
+  return p;
+}
+
+static bool consume_keyword(const char *&p, const char *keyword)
+{
+  p = skip_spaces(p);
+  size_t len = strlen(keyword);
+  if (strncasecmp(p, keyword, len) != 0) {
+    return false;
+  }
+  char next = p[len];
+  if (isalnum((unsigned char)next) || next == '_') {
+    return false;
+  }
+  p += len;
+  return true;
+}
+
+static bool read_identifier(const char *&p, std::string &identifier)
+{
+  p = skip_spaces(p);
+  const char *start = p;
+  if (!isalpha((unsigned char)*p) && *p != '_') {
+    return false;
+  }
+  p++;
+  while (isalnum((unsigned char)*p) || *p == '_') {
+    p++;
+  }
+  identifier.assign(start, p - start);
+  return true;
+}
+
+static bool parse_create_as_select(const char *sql, ParsedSqlResult *sql_result, bool is_view)
+{
+  const char *p = sql;
+  if (!consume_keyword(p, "create")) {
+    return false;
+  }
+  if (!consume_keyword(p, is_view ? "view" : "table")) {
+    return false;
+  }
+
+  std::string relation_name;
+  if (!read_identifier(p, relation_name) || !consume_keyword(p, "as")) {
+    return false;
+  }
+
+  p = skip_spaces(p);
+  if (strncasecmp(p, "select", 6) != 0) {
+    return false;
+  }
+
+  ParsedSqlResult select_result;
+  sql_parse(p, &select_result);
+  if (select_result.sql_nodes().empty() || select_result.sql_nodes().front()->flag != SCF_SELECT) {
+    return false;
+  }
+
+  std::unique_ptr<ParsedSqlNode> node = std::make_unique<ParsedSqlNode>(SCF_CREATE_TABLE);
+  node->create_table.relation_name = relation_name;
+  node->create_table.select.reset(new SelectSqlNode);
+  node->create_table.select->attributes.swap(select_result.sql_nodes().front()->selection.attributes);
+  node->create_table.select->expressions.swap(select_result.sql_nodes().front()->selection.expressions);
+  node->create_table.select->relations.swap(select_result.sql_nodes().front()->selection.relations);
+  node->create_table.select->aliases.swap(select_result.sql_nodes().front()->selection.aliases);
+  node->create_table.select->conditions.swap(select_result.sql_nodes().front()->selection.conditions);
+  node->create_table.select->group_by.swap(select_result.sql_nodes().front()->selection.group_by);
+  node->create_table.select->having.swap(select_result.sql_nodes().front()->selection.having);
+  node->create_table.select->order_by.swap(select_result.sql_nodes().front()->selection.order_by);
+  sql_result->add_sql_node(std::move(node));
+  return true;
+}
+
 // 无 FROM 的纯标量 SELECT（如 select length('a') len1, length('b') len2）
 // 直接改写为 CALC，走最短执行路径，避免 SelectStmt/FilterStmt 中间环节。
 static void try_convert_scalar_select_to_calc(ParsedSqlResult *sql_result)
@@ -106,6 +185,11 @@ static void try_convert_scalar_select_to_calc(ParsedSqlResult *sql_result)
 
 RC parse(const char *st, ParsedSqlResult *sql_result)
 {
+  if (parse_create_as_select(st, sql_result, false) || parse_create_as_select(st, sql_result, true)) {
+    try_convert_scalar_select_to_calc(sql_result);
+    return RC::SUCCESS;
+  }
+
   std::vector<std::string> inserts;
   if (split_multi_insert(st, inserts)) {
     // Multi-tuple INSERT: parse first tuple normally, then merge
