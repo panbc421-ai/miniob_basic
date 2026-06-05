@@ -113,6 +113,11 @@ public:
     return filter_units_;
   }
 
+  const std::vector<bool> &or_with_prev() const
+  {
+    return or_with_prev_;
+  }
+
 public:
   static RC create(Db *db, Table *default_table, std::unordered_map<std::string, Table *> *tables,
       const ConditionSqlNode *conditions, int condition_num, FilterStmt *&stmt,
@@ -126,6 +131,10 @@ public:
       ColumnAliasMap *outer_column_aliases = nullptr,
       ColumnAliasMap *current_column_aliases = nullptr);
 
+  static RC eval_unit(const FilterUnit *unit, const Tuple &tuple, bool &result);
+  static RC eval(const FilterStmt *stmt, const Tuple &tuple, bool &match);
+
 private:
-  std::vector<FilterUnit *> filter_units_;  // 默认当前都是AND关系
+  std::vector<FilterUnit *> filter_units_;
+  std::vector<bool>         or_with_prev_;  ///< or_with_prev_[i]: unit[i] 与前一项 OR 连接
 };

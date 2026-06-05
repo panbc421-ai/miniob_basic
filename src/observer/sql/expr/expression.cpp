@@ -53,6 +53,10 @@ ColumnAliasMap build_column_alias_map(const SelectSqlNode &sel,
     if (fm == nullptr) {
       continue;
     }
+    // Parser sets alias to field name when AS is omitted; only explicit aliases count.
+    if (item.alias == uf->field_name()) {
+      continue;
+    }
     ColumnAliasBinding binding;
     binding.table_name = table->name();
     binding.field_name = uf->field_name();
@@ -560,22 +564,35 @@ RC ArithmeticExpr::calc_value(const Value &left_value, const Value &right_value,
       if (target_type == AttrType::INTS) {
         value.set_int(left_value.get_int() * right_value.get_int());
       } else {
-        value.set_float(left_value.get_float() * right_value.get_float());
+        double result = static_cast<double>(left_value.get_float()) * static_cast<double>(right_value.get_float());
+        if (!std::isfinite(result)) {
+          value.set_null(true);
+        } else {
+          value.set_float(static_cast<float>(result));
+        }
       }
     } break;
 
     case Type::DIV: {
-      if (target_type == AttrType::INTS) {
+      if (left_value.is_null() || right_value.is_null()) {
+        value.set_null(true);
+      } else if (target_type == AttrType::INTS) {
         if (right_value.get_int() == 0) {
-          value.set_int(numeric_limits<int>::max());
+          value.set_null(true);
         } else {
           value.set_int(left_value.get_int() / right_value.get_int());
         }
       } else {
-        if (right_value.get_float() > -EPSILON && right_value.get_float() < EPSILON) {
-          value.set_float(numeric_limits<float>::max());
+        double divisor = static_cast<double>(right_value.get_float());
+        if (std::fabs(divisor) < static_cast<double>(EPSILON)) {
+          value.set_null(true);
         } else {
-          value.set_float(left_value.get_float() / right_value.get_float());
+          double result = static_cast<double>(left_value.get_float()) / divisor;
+          if (!std::isfinite(result)) {
+            value.set_null(true);
+          } else {
+            value.set_float(static_cast<float>(result));
+          }
         }
       }
     } break;
