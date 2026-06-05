@@ -527,7 +527,7 @@ AttrType ArithmeticExpr::value_type() const
       arithmetic_type_ != Type::DIV) {
     return AttrType::INTS;
   }
-  
+
   return AttrType::FLOATS;
 }
 
@@ -651,6 +651,21 @@ static int trimmed_char_length(const Value &v)
   return static_cast<int>(s.size());
 }
 
+static const char *day_suffix(int day)
+{
+  int last_two = day % 100;
+  if (last_two >= 11 && last_two <= 13) {
+    return "th";
+  }
+
+  switch (day % 10) {
+    case 1: return "st";
+    case 2: return "nd";
+    case 3: return "rd";
+    default: return "th";
+  }
+}
+
 static RC eval_function(const std::string &func_name, const std::vector<Value> &arg_values, Value &value)
 {
   std::string fn = func_name;
@@ -674,9 +689,9 @@ static RC eval_function(const std::string &func_name, const std::vector<Value> &
     }
     if (arg_values[1].attr_type() != INTS) return RC::INVALID_ARGUMENT;
     int precision = arg_values[1].get_int();
-    float factor = 1.0f;
-    for (int i = 0; i < precision; i++) {
-      factor *= 10.0f;
+    float factor = std::pow(10.0f, static_cast<float>(precision));
+    if (factor == 0.0f) {
+      return RC::INVALID_ARGUMENT;
     }
     value.set_float(std::round(f * factor) / factor);
     return RC::SUCCESS;
@@ -698,16 +713,28 @@ static RC eval_function(const std::string &func_name, const std::vector<Value> &
 
     size_t pos;
     char buf[16];
+    static const char *MONTH_NAMES[] = {
+        "", "January", "February", "March", "April", "May", "June",
+        "July", "August", "September", "October", "November", "December"};
+
     while ((pos = fmt.find("%Y")) != std::string::npos) {
       snprintf(buf, sizeof(buf), "%04d", y);
       fmt.replace(pos, 2, buf);
+    }
+    while ((pos = fmt.find("%y")) != std::string::npos) {
+      snprintf(buf, sizeof(buf), "%02d", y % 100);
+      fmt.replace(pos, 2, buf);
+    }
+    while ((pos = fmt.find("%M")) != std::string::npos) {
+      const char *month_name = (m >= 1 && m <= 12) ? MONTH_NAMES[m] : "";
+      fmt.replace(pos, 2, month_name);
     }
     while ((pos = fmt.find("%m")) != std::string::npos) {
       snprintf(buf, sizeof(buf), "%02d", m);
       fmt.replace(pos, 2, buf);
     }
     while ((pos = fmt.find("%D")) != std::string::npos) {
-      snprintf(buf, sizeof(buf), "%02d", d);
+      snprintf(buf, sizeof(buf), "%d%s", d, day_suffix(d));
       fmt.replace(pos, 2, buf);
     }
     while ((pos = fmt.find("%d")) != std::string::npos) {
