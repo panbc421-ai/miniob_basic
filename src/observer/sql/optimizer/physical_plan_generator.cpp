@@ -31,6 +31,7 @@ See the Mulan PSL v2 for more details. */
 #include "sql/operator/calc_logical_operator.h"
 #include "sql/operator/calc_physical_operator.h"
 #include "sql/expr/expression.h"
+#include "storage/index/index.h"
 #include "common/log/log.h"
 
 using namespace std;
@@ -118,9 +119,14 @@ RC PhysicalPlanGenerator::create_plan(TableGetLogicalOperator &table_get_oper, u
       }
 
       const Field &field = field_expr->field();
-      index = table->find_index_by_field(field.field_name());
-      if (nullptr != index) {
-        break;
+      Index *candidate = table->find_index_by_field(field.field_name());
+      // 复合索引只能做前缀列等值扫描；非首列（如 col4 on (col1,col4)）会构造错误键并崩溃
+      if (candidate != nullptr) {
+        const std::vector<std::string> &index_fields = candidate->index_meta().field_names();
+        if (!index_fields.empty() && 0 == strcmp(index_fields[0].c_str(), field.field_name())) {
+          index = candidate;
+          break;
+        }
       }
     }
   }
