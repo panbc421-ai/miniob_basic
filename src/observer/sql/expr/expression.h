@@ -465,6 +465,7 @@ public:
   ExprType type() const override { return ExprType::FUNCTION; }
   AttrType value_type() const override;
   RC get_value(const Tuple &tuple, Value &value) const override;
+  RC try_get_value(Value &value) const override;
 
   const std::string &func_name() const { return func_name_; }
   std::vector<std::unique_ptr<Expression>> &args() { return args_; }

@@ -615,7 +615,31 @@ alias_opt:
     ;
 
 select_stmt:        /*  select 语句的语法解析树*/
-    SELECT select_expr_list FROM ID alias_opt join_clause where group_by_clause order_by_clause
+    SELECT select_expr_list where group_by_clause order_by_clause
+    {
+      $$ = new ParsedSqlNode(SCF_SELECT);
+      if ($2 != nullptr) {
+        $$->selection.expressions.swap(*$2);
+        delete $2;
+      }
+      if ($3 != nullptr) {
+        for (auto &c : *$3) {
+          $$->selection.conditions.emplace_back(std::move(c));
+        }
+        delete $3;
+      }
+      if ($4 != nullptr) {
+        std::reverse($4->begin(), $4->end());
+        $$->selection.group_by.swap(*$4);
+        delete $4;
+      }
+      if ($5 != nullptr) {
+        std::reverse($5->begin(), $5->end());
+        $$->selection.order_by.swap(*$5);
+        delete $5;
+      }
+    }
+    | SELECT select_expr_list FROM ID alias_opt join_clause where group_by_clause order_by_clause
     {
       $$ = new ParsedSqlNode(SCF_SELECT);
       if ($2 != nullptr) {
@@ -838,11 +862,12 @@ select_attr:
 // Unified select items: comma-separated list of expressions
 // Simple field names become UnboundFieldExpr (resolved later)
 select_expr_item:
-    expression
+    expression alias_opt
     {
       $$ = new SelectExprNode;
       $$->expr = $1;
-      $$->alias = $1->name();
+      $$->alias = $2 ? $2 : $1->name();
+      if ($2) free($2);
     }
     | agg_expr
     {
@@ -862,15 +887,11 @@ select_expr_list:
       $$->emplace_back(std::move(*$1));
       delete $1;
     }
-    | select_expr_item COMMA select_expr_list
+    | select_expr_list COMMA select_expr_item
     {
-      if ($3 != nullptr) {
-        $$ = $3;
-      } else {
-        $$ = new std::vector<SelectExprNode>;
-      }
-      $$->emplace_back(std::move(*$1));
-      delete $1;
+      $$ = $1;
+      $$->emplace_back(std::move(*$3));
+      delete $3;
     }
     ;
 

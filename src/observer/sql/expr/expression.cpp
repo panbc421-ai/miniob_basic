@@ -17,6 +17,7 @@ See the Mulan PSL v2 for more details. */
 #include "sql/parser/parse_defs.h"
 #include "storage/table/table.h"
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <unordered_map>
 
@@ -556,42 +557,46 @@ RC ArithmeticExpr::try_get_value(Value &value) const
 
 ////////////////////////////////////////////////////////////////////////////////
 
-AttrType FunctionExpr::value_type() const
+static int trimmed_char_length(const Value &v)
 {
-  std::string fn = func_name_;
-  std::transform(fn.begin(), fn.end(), fn.begin(), ::tolower);
-  if (fn == "length") return INTS;
-  if (fn == "round") return INTS;
-  if (fn == "date_format") return CHARS;
-  return UNDEFINED;
+  std::string s = v.get_string();
+  while (!s.empty() && s.back() == ' ') {
+    s.pop_back();
+  }
+  return static_cast<int>(s.size());
 }
 
-RC FunctionExpr::get_value(const Tuple &tuple, Value &value) const
+static RC eval_function(const std::string &func_name, const std::vector<Value> &arg_values, Value &value)
 {
-  std::vector<Value> arg_values;
-  arg_values.reserve(args_.size());
-  for (auto &arg : args_) {
-    Value v;
-    RC rc = arg->get_value(tuple, v);
-    if (rc != RC::SUCCESS) return rc;
-    arg_values.push_back(v);
-  }
-
-  std::string fn = func_name_;
+  std::string fn = func_name;
   std::transform(fn.begin(), fn.end(), fn.begin(), ::tolower);
 
   if (fn == "length") {
     if (arg_values.size() != 1) return RC::INVALID_ARGUMENT;
-    if (arg_values[0].attr_type() != CHARS) return RC::INVALID_ARGUMENT;
-    value.set_int((int)arg_values[0].get_string().length());
+    if (arg_values[0].attr_type() != CHARS && arg_values[0].attr_type() != TEXTS) {
+      return RC::INVALID_ARGUMENT;
+    }
+    value.set_int(trimmed_char_length(arg_values[0]));
     return RC::SUCCESS;
-  } else if (fn == "round") {
-    if (arg_values.size() != 1) return RC::INVALID_ARGUMENT;
+  }
+  if (fn == "round") {
+    if (arg_values.size() < 1 || arg_values.size() > 2) return RC::INVALID_ARGUMENT;
     if (arg_values[0].attr_type() != FLOATS) return RC::INVALID_ARGUMENT;
     float f = arg_values[0].get_float();
-    value.set_int((int)(f > 0 ? f + 0.5f : f - 0.5f));
+    if (arg_values.size() == 1) {
+      value.set_int(static_cast<int>(f > 0 ? f + 0.5f : f - 0.5f));
+      return RC::SUCCESS;
+    }
+    if (arg_values[1].attr_type() != INTS) return RC::INVALID_ARGUMENT;
+    int precision = arg_values[1].get_int();
+    float factor = 1.0f;
+    for (int i = 0; i < precision; i++) {
+      factor *= 10.0f;
+    }
+    value.set_float(std::round(f * factor) / factor);
     return RC::SUCCESS;
-  } else if (fn == "date_format") {
+  }
+  if (fn == "date_format") {
     if (arg_values.size() < 1 || arg_values.size() > 2) return RC::INVALID_ARGUMENT;
     if (arg_values[0].attr_type() != DATES) return RC::INVALID_ARGUMENT;
 
@@ -606,7 +611,6 @@ RC FunctionExpr::get_value(const Tuple &tuple, Value &value) const
       fmt = arg_values[1].get_string();
     }
 
-    // Replace format specifiers
     size_t pos;
     char buf[16];
     while ((pos = fmt.find("%Y")) != std::string::npos) {
@@ -615,6 +619,10 @@ RC FunctionExpr::get_value(const Tuple &tuple, Value &value) const
     }
     while ((pos = fmt.find("%m")) != std::string::npos) {
       snprintf(buf, sizeof(buf), "%02d", m);
+      fmt.replace(pos, 2, buf);
+    }
+    while ((pos = fmt.find("%D")) != std::string::npos) {
+      snprintf(buf, sizeof(buf), "%02d", d);
       fmt.replace(pos, 2, buf);
     }
     while ((pos = fmt.find("%d")) != std::string::npos) {
@@ -626,6 +634,44 @@ RC FunctionExpr::get_value(const Tuple &tuple, Value &value) const
   }
 
   return RC::UNIMPLENMENT;
+}
+
+AttrType FunctionExpr::value_type() const
+{
+  std::string fn = func_name_;
+  std::transform(fn.begin(), fn.end(), fn.begin(), ::tolower);
+  if (fn == "length") return INTS;
+  if (fn == "round") return args_.size() >= 2 ? FLOATS : INTS;
+  if (fn == "date_format") return CHARS;
+  return UNDEFINED;
+}
+
+RC FunctionExpr::try_get_value(Value &value) const
+{
+  std::vector<Value> arg_values;
+  arg_values.reserve(args_.size());
+  for (auto &arg : args_) {
+    Value v;
+    RC rc = arg->try_get_value(v);
+    if (rc != RC::SUCCESS) {
+      return rc;
+    }
+    arg_values.push_back(v);
+  }
+  return eval_function(func_name_, arg_values, value);
+}
+
+RC FunctionExpr::get_value(const Tuple &tuple, Value &value) const
+{
+  std::vector<Value> arg_values;
+  arg_values.reserve(args_.size());
+  for (auto &arg : args_) {
+    Value v;
+    RC rc = arg->get_value(tuple, v);
+    if (rc != RC::SUCCESS) return rc;
+    arg_values.push_back(v);
+  }
+  return eval_function(func_name_, arg_values, value);
 }
 
 ////////////////////////////////////////////////////////////////////////////////

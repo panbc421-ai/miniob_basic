@@ -221,8 +221,10 @@ RC PlainCommunicator::write_result_internal(SessionEvent *event, bool &need_disc
 
   rc = RC::SUCCESS;
   Tuple *tuple = nullptr;
+  bool printed_data = false;
   while (RC::SUCCESS == (rc = sql_result->next_tuple(tuple))) {
     assert(tuple != nullptr);
+    printed_data = true;
 
     int cell_num = tuple->cell_num();
     for (int i = 0; i < cell_num; i++) {
@@ -240,7 +242,8 @@ RC PlainCommunicator::write_result_internal(SessionEvent *event, bool &need_disc
       rc = tuple->cell_at(i, value);
       if (rc != RC::SUCCESS) {
         sql_result->close();
-        return rc;
+        sql_result->set_return_code(rc);
+        return write_state(event, need_disconnect);
       }
 
       std::string cell_str = value.to_string();
@@ -265,10 +268,8 @@ RC PlainCommunicator::write_result_internal(SessionEvent *event, bool &need_disc
     rc = RC::SUCCESS;
   }
 
-  if (cell_num == 0) {
-    // 除了select之外，其它的消息通常不会通过operator来返回结果，表头和行数据都是空的
-    // 这里针对这种情况做特殊处理，当表头和行数据都是空的时候，就返回处理的结果
-    // 可能是insert/delete等操作，不直接返回给客户端数据，这里把处理结果返回给客户端
+  if (cell_num == 0 && !printed_data) {
+    // insert/delete 等：无表头且无结果行
     RC rc_close = sql_result->close();
     if (rc == RC::SUCCESS) {
       rc = rc_close;

@@ -1,4 +1,5 @@
 #include "sql/stmt/select_stmt.h"
+#include "sql/stmt/calc_stmt.h"
 #include "sql/stmt/filter_stmt.h"
 #include "common/log/log.h"
 #include "common/lang/string.h"
@@ -233,7 +234,7 @@ RC SelectStmt::create(Db *db, const SelectSqlNode &select_sql, Stmt *&stmt,
   // === 处理 select_sql.expressions ===
   std::vector<SelectExprNode> select_exprs;
   if (!select_sql.expressions.empty()) {
-    for (int i = static_cast<int>(select_sql.expressions.size()) - 1; i >= 0; i--) {
+    for (size_t i = 0; i < select_sql.expressions.size(); i++) {
       const auto &sel_expr = select_sql.expressions[i];
 
       // 处理聚合
@@ -290,6 +291,10 @@ RC SelectStmt::create(Db *db, const SelectSqlNode &select_sql, Stmt *&stmt,
         return rc;
       }
 
+      if (!alias.empty()) {
+        e->set_name(alias);
+      }
+
       if (e->type() == ExprType::FIELD) {
         auto *fe = static_cast<FieldExpr *>(e.get());
         query_fields.push_back(fe->field());
@@ -342,6 +347,24 @@ RC SelectStmt::create(Db *db, const SelectSqlNode &select_sql, Stmt *&stmt,
   if (rc != RC::SUCCESS) {
     LOG_WARN("cannot construct filter stmt");
     return rc;
+  }
+
+  // 无 FROM 的纯表达式/函数标量（如 select length('a') len1）：走 Calc，避免空 Project 无结果
+  const bool no_from_scalar = tables.empty() && query_fields.empty() && !has_aggregation && !select_exprs.empty() &&
+                              (filter_stmt == nullptr || filter_stmt->filter_units().empty());
+  if (no_from_scalar) {
+    CalcStmt *calc_stmt = new CalcStmt();
+    for (auto &se : select_exprs) {
+      if (se.expr != nullptr) {
+        calc_stmt->expressions().emplace_back(std::unique_ptr<Expression>(se.expr));
+        se.expr = nullptr;
+      }
+    }
+    if (filter_stmt != nullptr) {
+      delete filter_stmt;
+    }
+    stmt = calc_stmt;
+    return RC::SUCCESS;
   }
 
   SelectStmt *select_stmt = new SelectStmt();

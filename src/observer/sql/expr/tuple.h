@@ -291,10 +291,14 @@ public:
       if (index < 0 || index >= static_cast<int>(expressions_->size())) {
         return RC::INTERNAL;
       }
+      const Expression *expr = (*expressions_)[index].get();
       if (tuple_ == nullptr) {
+        RC rc = const_cast<Expression *>(expr)->try_get_value(cell);
+        if (rc == RC::SUCCESS) {
+          return RC::SUCCESS;
+        }
         return RC::INTERNAL;
       }
-      const Expression *expr = (*expressions_)[index].get();
       return expr->get_value(*tuple_, cell);
     }
     // Legacy field-based path

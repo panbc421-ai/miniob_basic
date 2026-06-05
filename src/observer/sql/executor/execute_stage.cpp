@@ -24,6 +24,7 @@ See the Mulan PSL v2 for more details. */
 #include "event/session_event.h"
 #include "sql/stmt/stmt.h"
 #include "sql/stmt/select_stmt.h"
+#include "sql/expr/expression.h"
 #include "storage/default/default_handler.h"
 #include "sql/executor/command_executor.h"
 #include "sql/operator/calc_physical_operator.h"
@@ -92,13 +93,29 @@ RC ExecuteStage::handle_request_with_physical_operator(SQLStageEvent *sql_event)
         schema.append_cell(field.field_name());
       }
     }
+    for (const SelectExprNode &se : select_stmt->select_exprs()) {
+      if (!se.alias.empty()) {
+        schema.append_cell(se.alias.c_str());
+      } else if (se.expr != nullptr) {
+        schema.append_cell(se.expr->name().c_str());
+      }
+    }
   }
 } break;
 
     case StmtType::CALC: {
       CalcPhysicalOperator *calc_operator = static_cast<CalcPhysicalOperator *>(physical_operator.get());
-      for (const unique_ptr<Expression> & expr : calc_operator->expressions()) {
-        schema.append_cell(expr->name().c_str());
+      bool has_function = false;
+      for (const unique_ptr<Expression> &expr : calc_operator->expressions()) {
+        if (expr->type() == ExprType::FUNCTION) {
+          has_function = true;
+          break;
+        }
+      }
+      if (!has_function) {
+        for (const unique_ptr<Expression> &expr : calc_operator->expressions()) {
+          schema.append_cell(expr->name().c_str());
+        }
       }
     } break;
 
