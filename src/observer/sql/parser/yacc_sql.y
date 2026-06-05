@@ -165,6 +165,8 @@ ArithmeticExpr *create_arithmetic_expression(ArithmeticExpr::Type type,
   SelectExprNode *                  select_expr;
   std::vector<SelectExprNode> *     select_expr_list;
   std::vector<std::string> *        string_list;
+  UpdateAssignmentNode *            update_assign;
+  std::vector<UpdateAssignmentNode> * update_assign_list;
 }
 
 %token <number> NUMBER
@@ -222,6 +224,8 @@ ArithmeticExpr *create_arithmetic_expression(ArithmeticExpr::Type type,
 %type <rel_attr_list>       group_by_clause
 %type <rel_attr_list>       group_by_list
 %type <string_list>         id_list
+%type <update_assign>       update_assign
+%type <update_assign_list>  update_assign_list
 // commands should be a list but I use a single command instead
 %type <sql_node>            commands
 
@@ -595,18 +599,66 @@ delete_stmt:    /*  delete 语句的语法解析树*/
     }
     ;
 update_stmt:      /*  update 语句的语法解析树*/
-    UPDATE ID SET ID EQ value where 
+    UPDATE ID SET update_assign update_assign_list where
     {
       $$ = new ParsedSqlNode(SCF_UPDATE);
       $$->update.relation_name = $2;
-      $$->update.attribute_name = $4;
-      $$->update.value = *$6;
-      if ($7 != nullptr) {
-        $$->update.conditions.swap(*$7);
-        delete $7;
+      if ($5 != nullptr) {
+        $$->update.assignments.swap(*$5);
+        delete $5;
+      }
+      $$->update.assignments.emplace_back(std::move(*$4));
+      std::reverse($$->update.assignments.begin(), $$->update.assignments.end());
+      delete $4;
+      if ($6 != nullptr) {
+        $$->update.conditions.swap(*$6);
+        delete $6;
       }
       free($2);
-      free($4);
+    }
+    ;
+update_assign_list:
+    /* empty */
+    {
+      $$ = nullptr;
+    }
+    | COMMA update_assign update_assign_list
+    {
+      if ($3 != nullptr) {
+        $$ = $3;
+      } else {
+        $$ = new std::vector<UpdateAssignmentNode>;
+      }
+      $$->emplace_back(std::move(*$2));
+      delete $2;
+    }
+    ;
+update_assign:
+    ID EQ value
+    {
+      $$ = new UpdateAssignmentNode;
+      $$->attribute_name = $1;
+      $$->value = *$3;
+      $$->is_subquery = false;
+      free($1);
+      delete $3;
+    }
+    | ID EQ LBRACE select_stmt RBRACE
+    {
+      auto *sel = new SelectSqlNode;
+      sel->attributes.swap($4->selection.attributes);
+      sel->expressions.swap($4->selection.expressions);
+      sel->relations.swap($4->selection.relations);
+      sel->aliases.swap($4->selection.aliases);
+      sel->conditions.swap($4->selection.conditions);
+      sel->group_by.swap($4->selection.group_by);
+      sel->order_by.swap($4->selection.order_by);
+      $$ = new UpdateAssignmentNode;
+      $$->attribute_name = $1;
+      $$->is_subquery = true;
+      $$->subquery = sel;
+      free($1);
+      delete $4;
     }
     ;
 alias_opt:

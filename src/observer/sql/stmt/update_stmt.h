@@ -13,18 +13,31 @@ See the Mulan PSL v2 for more details. */
 //
 #pragma once
 #include <string>
+#include <vector>
 #include "common/rc.h"
 #include "sql/stmt/stmt.h"
 #include "sql/stmt/filter_stmt.h"
 #include "sql/parser/value.h"
 
 class Table;
+class FieldMeta;
+struct SelectSqlNode;
+
+/**
+ * @brief 一个待更新字段的解析结果
+ */
+struct UpdateUnit
+{
+  const FieldMeta     *field_meta = nullptr;   ///< 目标字段
+  Value                value;                   ///< 常量值（is_subquery=false 时）
+  bool                 is_subquery = false;     ///< 是否来自子查询
+  const SelectSqlNode *subquery = nullptr;      ///< 子查询（非拥有，随 ParsedSqlNode 存活）
+};
 
 class UpdateStmt : public Stmt 
 {
 public:
   UpdateStmt() = default;
-  UpdateStmt(Table *table, const Value &value, const std::string &field_name, FilterStmt *filter_stmt);
   ~UpdateStmt();
 
 public:
@@ -33,13 +46,11 @@ public:
 public:
   StmtType type() const override { return StmtType::UPDATE; }
   Table *table() const { return table_; }
-  const Value &value() const { return value_; }
-  const std::string &field_name() const { return field_name_; }
+  const std::vector<UpdateUnit> &units() const { return units_; }
   FilterStmt *filter_stmt() const { return filter_stmt_; }
 
 private:
   Table *table_ = nullptr;
-  Value value_;
-  std::string field_name_;
+  std::vector<UpdateUnit> units_;
   FilterStmt *filter_stmt_ = nullptr;
 };

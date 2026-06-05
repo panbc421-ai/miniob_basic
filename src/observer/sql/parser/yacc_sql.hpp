@@ -157,8 +157,10 @@ union YYSTYPE
   SelectExprNode *                  select_expr;
   std::vector<SelectExprNode> *     select_expr_list;
   std::vector<std::string> *        string_list;
+  UpdateAssignmentNode *            update_assign;
+  std::vector<UpdateAssignmentNode> * update_assign_list;
 
-#line 162 "yacc_sql.hpp"
+#line 164 "yacc_sql.hpp"
 
 };
 typedef union YYSTYPE YYSTYPE;

@@ -200,15 +200,26 @@ struct DeleteSqlNode
 };
 
 /**
+ * @brief 描述 update 语句中的一个赋值项 (col = value | col = (subquery))
+ * @ingroup SQLParser
+ */
+struct UpdateAssignmentNode
+{
+  std::string    attribute_name;          ///< 被更新的字段名
+  Value          value;                    ///< 常量值（is_subquery=false 时有效）
+  bool           is_subquery = false;      ///< 该赋值是否来自子查询
+  SelectSqlNode *subquery     = nullptr;   ///< 子查询（is_subquery=true 时有效，所有权随 ParsedSqlNode）
+};
+
+/**
  * @brief 描述一个update语句
  * @ingroup SQLParser
  */
 struct UpdateSqlNode
 {
-  std::string                   relation_name;         ///< Relation to update
-  std::string                   attribute_name;        ///< 更新的字段，仅支持一个字段
-  Value                         value;                 ///< 更新的值，仅支持一个字段
-  std::vector<ConditionSqlNode> conditions;
+  std::string                       relation_name;   ///< Relation to update
+  std::vector<UpdateAssignmentNode> assignments;     ///< SET 子句的多个赋值项
+  std::vector<ConditionSqlNode>     conditions;
 };
 
 /**
