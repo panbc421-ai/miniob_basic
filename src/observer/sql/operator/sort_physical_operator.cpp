@@ -68,7 +68,16 @@ RC SortPhysicalOperator::next()
             AttrType ta = va.attr_type();
             AttrType tb = vb.attr_type();
 
-            if (ta == INTS && tb == INTS) {
+            // NULL ordering: treat NULL as the smallest value (sorts first in ASC).
+            bool a_null = va.is_null();
+            bool b_null = vb.is_null();
+            if (a_null || b_null) {
+              if (a_null && b_null) {
+                cmp = 0;
+              } else {
+                cmp = a_null ? -1 : 1;
+              }
+            } else if (ta == INTS && tb == INTS) {
               int ia = va.get_int(), ib = vb.get_int();
               cmp = (ia < ib) ? -1 : (ia > ib) ? 1 : 0;
             } else if (ta == FLOATS && tb == FLOATS) {
