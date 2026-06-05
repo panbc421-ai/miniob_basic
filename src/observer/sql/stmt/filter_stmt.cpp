@@ -259,6 +259,137 @@ FilterStmt::~FilterStmt()
   filter_units_.clear();
 }
 
+RC FilterStmt::eval_unit(const FilterUnit *unit, const Tuple &tuple, bool &result)
+{
+  if (unit == nullptr) {
+    result = true;
+    return RC::SUCCESS;
+  }
+  if (unit->has_custom_expr()) {
+    Value v;
+    RC rc = unit->custom_expr()->get_value(tuple, v);
+    if (rc != RC::SUCCESS) {
+      return rc;
+    }
+    result = v.get_boolean();
+    return RC::SUCCESS;
+  }
+  if (unit->is_expr_based()) {
+    Value left_value;
+    Value right_value;
+    RC rc = unit->left_expr()->get_value(tuple, left_value);
+    if (rc != RC::SUCCESS) {
+      return rc;
+    }
+    rc = unit->right_expr()->get_value(tuple, right_value);
+    if (rc != RC::SUCCESS) {
+      return rc;
+    }
+    ComparisonExpr cmp(unit->comp(), std::unique_ptr<Expression>(), std::unique_ptr<Expression>());
+    return cmp.compare_value(left_value, right_value, result);
+  }
+
+  Value left_value;
+  Value right_value;
+  if (unit->left().is_attr) {
+    TupleCellSpec spec(unit->left().field.table_name(), unit->left().field.field_name());
+    RC rc = tuple.find_cell(spec, left_value);
+    if (rc != RC::SUCCESS) {
+      return rc;
+    }
+  } else {
+    left_value = unit->left().value;
+  }
+  if (unit->right().is_attr) {
+    TupleCellSpec spec(unit->right().field.table_name(), unit->right().field.field_name());
+    RC rc = tuple.find_cell(spec, right_value);
+    if (rc != RC::SUCCESS) {
+      return rc;
+    }
+  } else {
+    right_value = unit->right().value;
+  }
+  ComparisonExpr cmp(unit->comp(), std::unique_ptr<Expression>(), std::unique_ptr<Expression>());
+  return cmp.compare_value(left_value, right_value, result);
+}
+
+RC FilterStmt::eval(const FilterStmt *stmt, const Tuple &tuple, bool &match)
+{
+  if (stmt == nullptr) {
+    match = true;
+    return RC::SUCCESS;
+  }
+  const std::vector<FilterUnit *> &units = stmt->filter_units();
+  if (units.empty()) {
+    match = true;
+    return RC::SUCCESS;
+  }
+
+  const std::vector<bool> &or_prev = stmt->or_with_prev();
+  bool has_or = false;
+  for (bool b : or_prev) {
+    if (b) {
+      has_or = true;
+      break;
+    }
+  }
+
+  if (!has_or) {
+    match = true;
+    for (const FilterUnit *unit : units) {
+      bool cond = false;
+      RC rc = eval_unit(unit, tuple, cond);
+      if (rc != RC::SUCCESS) {
+        return rc;
+      }
+      if (!cond) {
+        match = false;
+        break;
+      }
+    }
+    return RC::SUCCESS;
+  }
+
+  std::vector<bool> or_results;
+  std::vector<bool> and_group;
+  auto flush_and = [&]() {
+    if (and_group.empty()) {
+      return;
+    }
+    bool and_val = true;
+    for (bool v : and_group) {
+      if (!v) {
+        and_val = false;
+        break;
+      }
+    }
+    or_results.push_back(and_val);
+    and_group.clear();
+  };
+
+  for (size_t i = 0; i < units.size(); i++) {
+    bool cond = false;
+    RC rc = eval_unit(units[i], tuple, cond);
+    if (rc != RC::SUCCESS) {
+      return rc;
+    }
+    if (i > 0 && i < or_prev.size() && or_prev[i]) {
+      flush_and();
+    }
+    and_group.push_back(cond);
+  }
+  flush_and();
+
+  match = false;
+  for (bool v : or_results) {
+    if (v) {
+      match = true;
+      break;
+    }
+  }
+  return RC::SUCCESS;
+}
+
 RC FilterStmt::create(Db *db, Table *default_table, std::unordered_map<std::string, Table *> *tables,
     const ConditionSqlNode *conditions, int condition_num, FilterStmt *&stmt,
     std::unordered_map<std::string, Table *> *outer_table_map,
@@ -279,6 +410,7 @@ RC FilterStmt::create(Db *db, Table *default_table, std::unordered_map<std::stri
       return rc;
     }
     tmp_stmt->filter_units_.push_back(filter_unit);
+    tmp_stmt->or_with_prev_.push_back(i > 0 && conditions[i].connect_or);
   }
 
   stmt = tmp_stmt;
@@ -375,6 +507,24 @@ static bool has_correlated_field(Expression *e) {
     auto *fn = static_cast<FunctionExpr *>(e);
     for (auto &a : fn->args()) {
       if (has_correlated_field(a.get())) return true;
+    }
+  }
+  return false;
+}
+
+static bool filter_stmt_has_correlated(const FilterStmt *stmt)
+{
+  if (stmt == nullptr) {
+    return false;
+  }
+  for (const FilterUnit *unit : stmt->filter_units()) {
+    if (unit->has_custom_expr() && has_correlated_field(unit->custom_expr())) {
+      return true;
+    }
+    if (unit->is_expr_based()) {
+      if (has_correlated_field(unit->left_expr()) || has_correlated_field(unit->right_expr())) {
+        return true;
+      }
     }
   }
   return false;
@@ -582,6 +732,13 @@ if (comp < EQUAL_TO || comp >= NO_OP) {
           is_correlated = true;
           inner_stmt = nullptr;
           rc = RC::SUCCESS;
+        } else if (inner_stmt != nullptr) {
+          auto *inner_sel = static_cast<SelectStmt *>(inner_stmt);
+          if (filter_stmt_has_correlated(inner_sel->filter_stmt())) {
+            delete inner_stmt;
+            inner_stmt = nullptr;
+            is_correlated = true;
+          }
         }
       }
 
@@ -640,7 +797,7 @@ if (comp < EQUAL_TO || comp >= NO_OP) {
           if (local_rc != RC::SUCCESS) {
             g_outer_tuple = nullptr;
             value.set_boolean(false);
-            return local_rc;
+            return RC::SUCCESS;
           }
           auto *sel_stmt = static_cast<SelectStmt *>(inner);
 

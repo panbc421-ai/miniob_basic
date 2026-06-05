@@ -326,11 +326,19 @@ RC SelectStmt::create(Db *db, const SelectSqlNode &select_sql, Stmt *&stmt,
         return rc;
       }
 
+      bool implicit_alias = alias.empty();
+      if (e->type() == ExprType::FIELD) {
+        auto *fe = static_cast<FieldExpr *>(e.get());
+        if (alias == fe->field().field_name()) {
+          implicit_alias = true;
+        }
+      }
+
       if (!alias.empty()) {
         e->set_name(alias);
       }
 
-      if (e->type() == ExprType::FIELD) {
+      if (e->type() == ExprType::FIELD && implicit_alias) {
         auto *fe = static_cast<FieldExpr *>(e.get());
         query_fields.push_back(fe->field());
       } else {

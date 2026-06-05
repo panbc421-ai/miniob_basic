@@ -93,6 +93,7 @@ struct ConditionSqlNode
   // 表达式路径: 当非空时，直接使用表达式树，忽略 left_is_attr 等字段
   Expression     *left_expr = nullptr;
   Expression     *right_expr = nullptr;
+  bool            connect_or = false;  ///< true 表示与前一个条件以 OR 连接
 
   ConditionSqlNode() = default;
   ConditionSqlNode(ConditionSqlNode &&other) noexcept
@@ -249,6 +250,14 @@ struct CreateTableSqlNode
 {
   std::string                  relation_name;         ///< Relation name
   std::vector<AttrInfoSqlNode> attr_infos;            ///< attributes
+  bool                         is_ctas = false;       ///< CREATE TABLE ... AS SELECT
+  SelectSqlNode               *select_sql = nullptr;  ///< CTAS 的 SELECT（所有权随 ParsedSqlNode）
+};
+
+struct CreateViewSqlNode
+{
+  std::string  view_name;
+  SelectSqlNode select_sql;
 };
 
 /**
@@ -356,6 +365,7 @@ enum SqlCommandFlag
   SCF_UPDATE,
   SCF_DELETE,
   SCF_CREATE_TABLE,
+  SCF_CREATE_VIEW,
   SCF_DROP_TABLE,
   SCF_CREATE_INDEX,
   SCF_DROP_INDEX,
@@ -387,6 +397,7 @@ public:
   DeleteSqlNode             deletion;
   UpdateSqlNode             update;
   CreateTableSqlNode        create_table;
+  CreateViewSqlNode         create_view;
   DropTableSqlNode          drop_table;
   CreateIndexSqlNode        create_index;
   DropIndexSqlNode          drop_index;

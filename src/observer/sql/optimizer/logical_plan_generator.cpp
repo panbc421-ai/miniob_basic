@@ -161,6 +161,31 @@ static void adopt_custom_expr(const FilterUnit *unit, std::vector<std::unique_pt
   }
 }
 
+static std::unique_ptr<Expression> filter_unit_to_expr(const FilterUnit *unit)
+{
+  if (unit->has_custom_expr()) {
+    Expression *e = unit->custom_expr();
+    if (e != nullptr && e->type() == ExprType::SUBQUERY && dynamic_cast<SubQueryExpr *>(e) == nullptr) {
+      const_cast<FilterUnit *>(unit)->set_custom_expr(nullptr);
+      return std::unique_ptr<Expression>(e);
+    }
+    return clone_expr_tree(unit->custom_expr());
+  }
+  if (unit->is_expr_based()) {
+    auto left  = clone_expr_tree(unit->left_expr());
+    auto right = clone_expr_tree(unit->right_expr());
+    return std::unique_ptr<Expression>(new ComparisonExpr(unit->comp(), std::move(left), std::move(right)));
+  }
+  auto make_expr = [](const FilterObj &obj) -> unique_ptr<Expression> {
+    if (obj.is_attr) {
+      return unique_ptr<Expression>(new FieldExpr(obj.field));
+    }
+    return unique_ptr<Expression>(new ValueExpr(obj.value));
+  };
+  return std::unique_ptr<Expression>(
+      new ComparisonExpr(unit->comp(), make_expr(unit->left()), make_expr(unit->right())));
+}
+
 RC LogicalPlanGenerator::create(Stmt *stmt, unique_ptr<LogicalOperator> &logical_operator)
 {
   RC rc = RC::SUCCESS;
@@ -218,8 +243,26 @@ RC LogicalPlanGenerator::create_plan(
   std::unordered_map<std::string, std::vector<const FilterUnit *>> table_filters;
   std::vector<const FilterUnit *> expr_filters;  // 基于表达式的filter
 
+  bool filter_has_or = false;
   if (filter_stmt != nullptr) {
+    for (bool b : filter_stmt->or_with_prev()) {
+      if (b) {
+        filter_has_or = true;
+        break;
+      }
+    }
+  }
+
+  if (filter_stmt != nullptr) {
+    if (filter_has_or) {
+      for (const FilterUnit *unit : filter_stmt->filter_units()) {
+        expr_filters.push_back(unit);
+      }
+    }
     for (const FilterUnit *unit : filter_stmt->filter_units()) {
+      if (filter_has_or) {
+        break;
+      }
       // 基于表达式的 filter: 尝试分类以支持 join interleaving
       if (unit->has_custom_expr()) {
         std::set<std::string> ref_tables;
@@ -404,19 +447,28 @@ RC LogicalPlanGenerator::create_plan(
       ComparisonExpr *cmp = new ComparisonExpr(unit->comp(), make_expr(unit->left()), make_expr(unit->right()));
       cmp_exprs.emplace_back(cmp);
     }
-    // Expression-based filters (clone the resolved expression trees)
-    for (const FilterUnit *unit : expr_filters) {
-      if (unit->has_custom_expr()) {
-        adopt_custom_expr(unit, cmp_exprs);
-      } else {
-        auto left = clone_expr_tree(unit->left_expr());
-        auto right = clone_expr_tree(unit->right_expr());
-        ComparisonExpr *cmp = new ComparisonExpr(unit->comp(), std::move(left), std::move(right));
-        cmp_exprs.emplace_back(cmp);
+    if (filter_has_or && filter_stmt != nullptr) {
+      unique_ptr<LogicalOperator> or_predicate;
+      RC or_rc = create_plan(filter_stmt, or_predicate);
+      if (or_rc == RC::SUCCESS && or_predicate) {
+        predicate_oper = unique_ptr<PredicateLogicalOperator>(static_cast<PredicateLogicalOperator *>(or_predicate.release()));
       }
+    } else {
+      for (const FilterUnit *unit : expr_filters) {
+        if (unit->has_custom_expr()) {
+          adopt_custom_expr(unit, cmp_exprs);
+        } else if (unit->is_expr_based()) {
+          auto left = clone_expr_tree(unit->left_expr());
+          auto right = clone_expr_tree(unit->right_expr());
+          ComparisonExpr *cmp = new ComparisonExpr(unit->comp(), std::move(left), std::move(right));
+          cmp_exprs.emplace_back(cmp);
+        } else {
+          cmp_exprs.emplace_back(filter_unit_to_expr(unit));
+        }
+      }
+      unique_ptr<ConjunctionExpr> conj(new ConjunctionExpr(ConjunctionExpr::Type::AND, cmp_exprs));
+      predicate_oper = unique_ptr<PredicateLogicalOperator>(new PredicateLogicalOperator(std::move(conj)));
     }
-    unique_ptr<ConjunctionExpr> conj(new ConjunctionExpr(ConjunctionExpr::Type::AND, cmp_exprs));
-    predicate_oper = unique_ptr<PredicateLogicalOperator>(new PredicateLogicalOperator(std::move(conj)));
   }
 
   unique_ptr<LogicalOperator> project_oper(new ProjectLogicalOperator(all_fields));
@@ -456,31 +508,61 @@ RC LogicalPlanGenerator::create_plan(
 RC LogicalPlanGenerator::create_plan(
     FilterStmt *filter_stmt, unique_ptr<LogicalOperator> &logical_operator)
 {
-  std::vector<unique_ptr<Expression>> cmp_exprs;
   const std::vector<FilterUnit *> &filter_units = filter_stmt->filter_units();
-  for (const FilterUnit *filter_unit : filter_units) {
-    const FilterObj &filter_obj_left = filter_unit->left();
-    const FilterObj &filter_obj_right = filter_unit->right();
-
-    unique_ptr<Expression> left(filter_obj_left.is_attr
-                                         ? static_cast<Expression *>(new FieldExpr(filter_obj_left.field))
-                                         : static_cast<Expression *>(new ValueExpr(filter_obj_left.value)));
-
-    unique_ptr<Expression> right(filter_obj_right.is_attr
-                                          ? static_cast<Expression *>(new FieldExpr(filter_obj_right.field))
-                                          : static_cast<Expression *>(new ValueExpr(filter_obj_right.value)));
-
-    ComparisonExpr *cmp_expr = new ComparisonExpr(filter_unit->comp(), std::move(left), std::move(right));
-    cmp_exprs.emplace_back(cmp_expr);
+  if (filter_units.empty()) {
+    logical_operator.reset();
+    return RC::SUCCESS;
   }
 
-  unique_ptr<PredicateLogicalOperator> predicate_oper;
-  if (!cmp_exprs.empty()) {
-    unique_ptr<ConjunctionExpr> conjunction_expr(new ConjunctionExpr(ConjunctionExpr::Type::AND, cmp_exprs));
-    predicate_oper = unique_ptr<PredicateLogicalOperator>(new PredicateLogicalOperator(std::move(conjunction_expr)));
+  const std::vector<bool> &or_prev = filter_stmt->or_with_prev();
+  bool has_or = false;
+  for (bool b : or_prev) {
+    if (b) {
+      has_or = true;
+      break;
+    }
   }
 
-  logical_operator = std::move(predicate_oper);
+  std::vector<std::unique_ptr<Expression>> top_exprs;
+  if (!has_or) {
+    for (const FilterUnit *unit : filter_units) {
+      top_exprs.emplace_back(filter_unit_to_expr(unit));
+    }
+    unique_ptr<ConjunctionExpr> conjunction_expr(new ConjunctionExpr(ConjunctionExpr::Type::AND, top_exprs));
+    logical_operator = unique_ptr<PredicateLogicalOperator>(new PredicateLogicalOperator(std::move(conjunction_expr)));
+    return RC::SUCCESS;
+  }
+
+  std::vector<std::unique_ptr<Expression>> or_parts;
+  std::vector<std::unique_ptr<Expression>> and_parts;
+  auto flush_and = [&]() {
+    if (and_parts.empty()) {
+      return;
+    }
+    if (and_parts.size() == 1) {
+      or_parts.emplace_back(std::move(and_parts[0]));
+      and_parts.clear();
+      return;
+    }
+    or_parts.emplace_back(new ConjunctionExpr(ConjunctionExpr::Type::AND, and_parts));
+    and_parts.clear();
+  };
+
+  for (size_t i = 0; i < filter_units.size(); i++) {
+    if (i > 0 && i < or_prev.size() && or_prev[i]) {
+      flush_and();
+    }
+    and_parts.emplace_back(filter_unit_to_expr(filter_units[i]));
+  }
+  flush_and();
+
+  std::unique_ptr<Expression> predicate_expr;
+  if (or_parts.size() == 1) {
+    predicate_expr = std::move(or_parts[0]);
+  } else {
+    predicate_expr.reset(new ConjunctionExpr(ConjunctionExpr::Type::OR, or_parts));
+  }
+  logical_operator = unique_ptr<PredicateLogicalOperator>(new PredicateLogicalOperator(std::move(predicate_expr)));
   return RC::SUCCESS;
 }
 

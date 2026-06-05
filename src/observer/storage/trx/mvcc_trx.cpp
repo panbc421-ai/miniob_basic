@@ -175,12 +175,21 @@ RC MvccTrx::delete_record(Table * table, Record &record)
     return RC::SUCCESS;
   }
   
-  end_field.set_int(record, -trx_id_);
-  RC rc = log_manager_->append_log(CLogType::DELETE, trx_id_, table->table_id(), record.rid(), 0, 0, nullptr);
-  ASSERT(rc == RC::SUCCESS, "failed to append delete record log. trx id=%d, table id=%d, rid=%s, record len=%d, rc=%s",
-      trx_id_, table->table_id(), record.rid().to_string().c_str(), record.len(), strrc(rc));
+  RID rid = record.rid();
+  auto record_updater = [this, &end_field](Record &rec) {
+    end_field.set_int(rec, -trx_id_);
+  };
+  RC rc = table->visit_record(rid, false/*readonly*/, record_updater);
+  if (rc != RC::SUCCESS) {
+    LOG_WARN("failed to mark record deleted. rid=%s, rc=%s", rid.to_string().c_str(), strrc(rc));
+    return rc;
+  }
 
-  operations_.insert(Operation(Operation::Type::DELETE, table, record.rid()));
+  rc = log_manager_->append_log(CLogType::DELETE, trx_id_, table->table_id(), rid, 0, 0, nullptr);
+  ASSERT(rc == RC::SUCCESS, "failed to append delete record log. trx id=%d, table id=%d, rid=%s, record len=%d, rc=%s",
+      trx_id_, table->table_id(), rid.to_string().c_str(), record.len(), strrc(rc));
+
+  operations_.insert(Operation(Operation::Type::DELETE, table, rid));
 
   return RC::SUCCESS;
 }
