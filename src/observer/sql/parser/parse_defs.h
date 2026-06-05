@@ -67,6 +67,8 @@ enum CompOp
   NOT_IN,       ///< "NOT IN"
   EXISTS_OP,    ///< "EXISTS"
   NOT_EXISTS,   ///< "NOT EXISTS"
+  IS_NULL,      ///< "IS NULL"
+  IS_NOT_NULL,  ///< "IS NOT NULL"
   NO_OP
 };
 

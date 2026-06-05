@@ -1,0 +1,2 @@
+select length('E2NO0VF4EHPV72MC73YT54585CDTYF22ZWVP') len1, length('W8AOL9JDY025') len2;
+exit;

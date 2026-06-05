@@ -1,0 +1,14 @@
+create table t_group_by (id int not null, score float not null, name char(1) null);
+insert into t_group_by VALUES (8, 2.04, 'L');
+insert into t_group_by VALUES (6, 2.17, 'Q');
+insert into t_group_by VALUES (7, 1.99, 'T');
+insert into t_group_by VALUES (1, 1.43, 'A');
+insert into t_group_by VALUES (2, 7.43, 'B');
+insert into t_group_by VALUES (4, 9.86, 'C');
+insert into t_group_by VALUES (5, 9.29, 'D');
+insert into t_group_by VALUES (6, 4.77, 'E');
+insert into t_group_by VALUES (7, 5.16, 'F');
+insert into t_group_by VALUES (8, 9.74, 'G');
+insert into t_group_by VALUES (9, 3.16, 'H');
+select id, sum(score) from t_group_by group by id having sum(score)>3.2809999999999997;
+exit;

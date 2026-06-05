@@ -1,0 +1,11 @@
+create table t_order_by_3(id int null, score float);
+insert into t_order_by_3 VALUES (22, 25.10);
+insert into t_order_by_3 VALUES (2, 94.80);
+insert into t_order_by_3 VALUES (null, 42.40);
+insert into t_order_by_3 VALUES (5, 34.40);
+insert into t_order_by_3 VALUES (2, 11.0);
+insert into t_order_by_3 VALUES (null, 12.0);
+insert into t_order_by_3 VALUES (6, 13.0);
+insert into t_order_by_3 VALUES (6, 14.0);
+select id from t_order_by_3 order by id;
+exit;

@@ -138,6 +138,7 @@ ArithmeticExpr *create_arithmetic_expression(ArithmeticExpr::Type type,
         NULL_T
         NULLABLE_T
         TEXT_T
+        IS
 
 /** union 中定义各种数据类型，真实生成的代码也是union类型，所以不能有非POD类型的数据 **/
 %union {
@@ -1138,6 +1139,24 @@ condition:
       $$->right_expr = new SubQueryExpr(sel);
       $$->comp = NOT_EXISTS;
       delete $4;
+    }
+    | expression IS NULL_T
+    {
+      Value null_value;
+      null_value.set_null(true);
+      $$ = new ConditionSqlNode;
+      $$->left_expr = $1;
+      $$->right_expr = new ValueExpr(null_value);
+      $$->comp = IS_NULL;
+    }
+    | expression IS NOT NULL_T
+    {
+      Value null_value;
+      null_value.set_null(true);
+      $$ = new ConditionSqlNode;
+      $$->left_expr = $1;
+      $$->right_expr = new ValueExpr(null_value);
+      $$->comp = IS_NOT_NULL;
     }
     | expression comp_op expression
     {

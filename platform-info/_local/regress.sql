@@ -1,0 +1,14 @@
+create table r(id int, age int, name char(10), bd date);
+insert into r values(1, 20, 'alice', '2020-01-01');
+insert into r values(2, 30, 'bob', '2019-05-05');
+insert into r values(3, 30, 'carol', '2018-03-03');
+select * from r where age > 25;
+select * from r where name like 'a%';
+select id, age from r order by age desc, id asc;
+select age, count(*) from r group by age;
+select max(age), min(age), avg(age), count(*) from r;
+select * from r where id in (select id from r where age=30);
+update r set age=99 where id=1;
+select * from r where id=1;
+select * from r where bd > '2018-01-01';
+exit;

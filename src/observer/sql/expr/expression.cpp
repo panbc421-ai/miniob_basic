@@ -293,7 +293,16 @@ static bool is_div_zero_sentinel(const Value &v)
 RC ComparisonExpr::compare_value(const Value &left, const Value &right, bool &result) const
 {
   RC rc = RC::SUCCESS;
-  // NULL semantics: any comparison with NULL returns false (unknown)
+  // IS NULL / IS NOT NULL: only depend on the left operand's null-ness.
+  if (comp_ == IS_NULL) {
+    result = left.is_null();
+    return rc;
+  }
+  if (comp_ == IS_NOT_NULL) {
+    result = !left.is_null();
+    return rc;
+  }
+  // NULL semantics: any other comparison with NULL returns false (unknown)
   if (left.is_null() || right.is_null()) {
     result = false;
     return rc;
