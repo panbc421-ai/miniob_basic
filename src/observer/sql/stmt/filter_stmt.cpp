@@ -380,6 +380,24 @@ static bool has_correlated_field(Expression *e) {
   return false;
 }
 
+static bool filter_stmt_has_correlated(const FilterStmt *stmt)
+{
+  if (stmt == nullptr) {
+    return false;
+  }
+  for (const FilterUnit *unit : stmt->filter_units()) {
+    if (unit->has_custom_expr() && has_correlated_field(unit->custom_expr())) {
+      return true;
+    }
+    if (unit->is_expr_based()) {
+      if (has_correlated_field(unit->left_expr()) || has_correlated_field(unit->right_expr())) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
 // Lightweight expression wrapper that delegates to a std::function
 namespace {
 class LambdaExpr : public Expression {
@@ -582,6 +600,13 @@ if (comp < EQUAL_TO || comp >= NO_OP) {
           is_correlated = true;
           inner_stmt = nullptr;
           rc = RC::SUCCESS;
+        } else if (inner_stmt != nullptr) {
+          auto *inner_sel = static_cast<SelectStmt *>(inner_stmt);
+          if (filter_stmt_has_correlated(inner_sel->filter_stmt())) {
+            delete inner_stmt;
+            inner_stmt = nullptr;
+            is_correlated = true;
+          }
         }
       }
 
@@ -640,7 +665,7 @@ if (comp < EQUAL_TO || comp >= NO_OP) {
           if (local_rc != RC::SUCCESS) {
             g_outer_tuple = nullptr;
             value.set_boolean(false);
-            return local_rc;
+            return RC::SUCCESS;
           }
           auto *sel_stmt = static_cast<SelectStmt *>(inner);
 

@@ -330,7 +330,7 @@ RC SelectStmt::create(Db *db, const SelectSqlNode &select_sql, Stmt *&stmt,
         e->set_name(alias);
       }
 
-      if (e->type() == ExprType::FIELD) {
+      if (e->type() == ExprType::FIELD && alias.empty()) {
         auto *fe = static_cast<FieldExpr *>(e.get());
         query_fields.push_back(fe->field());
       } else {
