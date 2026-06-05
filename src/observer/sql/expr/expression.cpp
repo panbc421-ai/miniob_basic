@@ -432,23 +432,25 @@ RC ComparisonExpr::compare_value(const Value &left, const Value &right, bool &re
 
 RC ComparisonExpr::try_get_value(Value &cell) const
 {
-  if (left_->type() == ExprType::VALUE && right_->type() == ExprType::VALUE) {
-    ValueExpr *left_value_expr = static_cast<ValueExpr *>(left_.get());
-    ValueExpr *right_value_expr = static_cast<ValueExpr *>(right_.get());
-    const Value &left_cell = left_value_expr->get_value();
-    const Value &right_cell = right_value_expr->get_value();
-
-    bool value = false;
-    RC rc = compare_value(left_cell, right_cell, value);
-    if (rc != RC::SUCCESS) {
-      LOG_WARN("failed to compare tuple cells. rc=%s", strrc(rc));
-    } else {
-      cell.set_boolean(value);
-    }
+  Value left_cell;
+  Value right_cell;
+  RC rc = left_->try_get_value(left_cell);
+  if (rc != RC::SUCCESS) {
+    return rc;
+  }
+  rc = right_->try_get_value(right_cell);
+  if (rc != RC::SUCCESS) {
     return rc;
   }
 
-  return RC::INVALID_ARGUMENT;
+  bool value = false;
+  rc = compare_value(left_cell, right_cell, value);
+  if (rc != RC::SUCCESS) {
+    LOG_WARN("failed to compare tuple cells. rc=%s", strrc(rc));
+  } else {
+    cell.set_boolean(value);
+  }
+  return rc;
 }
 
 RC ComparisonExpr::get_value(const Tuple &tuple, Value &value) const
@@ -673,7 +675,7 @@ static RC eval_function(const std::string &func_name, const std::vector<Value> &
 
   if (fn == "length") {
     if (arg_values.size() != 1) return RC::INVALID_ARGUMENT;
-    if (arg_values[0].attr_type() != CHARS && arg_values[0].attr_type() != TEXTS) {
+    if (arg_values[0].attr_type() != CHARS) {
       return RC::INVALID_ARGUMENT;
     }
     value.set_int(trimmed_char_length(arg_values[0]));
@@ -697,19 +699,16 @@ static RC eval_function(const std::string &func_name, const std::vector<Value> &
     return RC::SUCCESS;
   }
   if (fn == "date_format") {
-    if (arg_values.size() < 1 || arg_values.size() > 2) return RC::INVALID_ARGUMENT;
+    if (arg_values.size() != 2) return RC::INVALID_ARGUMENT;
     if (arg_values[0].attr_type() != DATES) return RC::INVALID_ARGUMENT;
+    if (arg_values[1].attr_type() != CHARS) return RC::INVALID_ARGUMENT;
 
     int date_val = arg_values[0].get_date();
     int y = date_val / 10000;
     int m = (date_val % 10000) / 100;
     int d = date_val % 100;
 
-    std::string fmt = "%Y-%m-%d";
-    if (arg_values.size() == 2) {
-      if (arg_values[1].attr_type() != CHARS) return RC::INVALID_ARGUMENT;
-      fmt = arg_values[1].get_string();
-    }
+    std::string fmt = arg_values[1].get_string();
 
     size_t pos;
     char buf[16];
