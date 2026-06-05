@@ -1882,29 +1882,22 @@ RC BplusTreeScanner::fix_user_key(
   *should_inclusive = false;
 
   int32_t attr_length = tree_handler_.file_header_.attr_length;
-  if (key_len == attr_length) {
-    char *key_buf = new (std::nothrow) char[attr_length];
-    if (nullptr == key_buf) {
-      return RC::NOMEM;
-    }
-    memcpy(key_buf, user_key, attr_length);
-    *fixed_key = key_buf;
-    return RC::SUCCESS;
-  }
-
-  assert(strlen(user_key) >= static_cast<size_t>(key_len));
   char *key_buf = new (std::nothrow) char[attr_length];
   if (nullptr == key_buf) {
     return RC::NOMEM;
   }
 
+  // 复合索引前缀扫描（如 WHERE id=7 命中 (id,col1)）：key 为定长二进制，不能用 strlen
   if (key_len <= attr_length) {
     memcpy(key_buf, user_key, key_len);
-    memset(key_buf + key_len, 0, attr_length - key_len);
-
+    if (key_len < attr_length) {
+      memset(key_buf + key_len, 0, attr_length - key_len);
+    }
     *fixed_key = key_buf;
     return RC::SUCCESS;
   }
+
+  assert(strlen(user_key) >= static_cast<size_t>(key_len));
 
   // key_len > attr_length
   memcpy(key_buf, user_key, attr_length);
