@@ -11,6 +11,8 @@
 | `f1ebb06` | update-select | UPDATE 支持多列 SET（`SET a=v, b=v WHERE ...`）及 `col=(标量子查询)`；UpdateSqlNode 改为 assignments 列表，executor 用 make_record 重建行（正确处理 NULL/char 填充/索引） | ✅ 多列只改命中行、单列回归正常、子查询取值正确 |
 | (待提交) | alias | 支持 `rel.*` 星号展开（语法 `ID DOT '*'` + select_stmt 展开为该表全部列）。**行值已正确**（6 行匹配） | ⚠️ 表头：显式别名(num/age)与 t2.* 的列名格式待平台结果确认后精确对齐；当前输出 `表名.列名` |
 
+| (待提交) | function/基础 | 提交工作区里既有但未提交的 `parse.cpp`：无 FROM 的标量 SELECT（如 `select length('a') l1, length('b') l2`）在 parse 阶段改写为 CALC。**确保平台构建 == 本地已验证状态** | ✅ 本地 socket `36 \| 12` 正确 |
+
 ## 重要环境说明
 - 平台测试很可能曾因 **构建 OOM** 失败而跑的是旧二进制（commit 链中有 `build.sh -j4 避免平台 OOM`、`触发平台重新编译`）。`function` 在本地 CLI 和 socket 两种协议下都输出 `36 | 12` 正确，但平台显示 0 分——疑似平台未成功构建 6ba6d09。
 - 本地构建/测试环境：WSL Ubuntu-22.04 + gcc 11.4，依赖已 `build.sh init` 装入 `/usr/local`。

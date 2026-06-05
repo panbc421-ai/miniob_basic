@@ -62,6 +62,48 @@ static bool split_multi_insert(const char *sql, std::vector<std::string> &out)
 
 int sql_parse(const char *st, ParsedSqlResult *sql_result);
 
+// 无 FROM 的纯标量 SELECT（如 select length('a') len1, length('b') len2）
+// 直接改写为 CALC，走最短执行路径，避免 SelectStmt/FilterStmt 中间环节。
+static void try_convert_scalar_select_to_calc(ParsedSqlResult *sql_result)
+{
+  if (sql_result == nullptr) {
+    return;
+  }
+  for (auto &node_ptr : sql_result->sql_nodes()) {
+    ParsedSqlNode &node = *node_ptr;
+    if (node.flag != SCF_SELECT) {
+      continue;
+    }
+    SelectSqlNode &sel = node.selection;
+    if (!sel.relations.empty() || !sel.attributes.empty() || !sel.conditions.empty() ||
+        !sel.group_by.empty() || !sel.order_by.empty() || sel.expressions.empty()) {
+      continue;
+    }
+    bool has_agg = false;
+    for (const SelectExprNode &se : sel.expressions) {
+      if (se.agg_type != AGG_NONE) {
+        has_agg = true;
+        break;
+      }
+    }
+    if (has_agg) {
+      continue;
+    }
+
+    node.flag = SCF_CALC;
+    for (SelectExprNode &se : sel.expressions) {
+      if (se.expr != nullptr) {
+        if (!se.alias.empty()) {
+          se.expr->set_name(se.alias);
+        }
+        node.calc.expressions.push_back(se.expr);
+        se.expr = nullptr;
+      }
+    }
+    sel.expressions.clear();
+  }
+}
+
 RC parse(const char *st, ParsedSqlResult *sql_result)
 {
   std::vector<std::string> inserts;
@@ -81,9 +123,11 @@ RC parse(const char *st, ParsedSqlResult *sql_result)
         }
       }
     }
+    try_convert_scalar_select_to_calc(sql_result);
     return RC::SUCCESS;
   }
   sql_parse(st, sql_result);
+  try_convert_scalar_select_to_calc(sql_result);
   return RC::SUCCESS;
 }
 
