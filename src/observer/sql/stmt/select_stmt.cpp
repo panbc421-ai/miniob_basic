@@ -83,6 +83,10 @@ SelectStmt::~SelectStmt()
     delete filter_stmt_;
     filter_stmt_ = nullptr;
   }
+  if (nullptr != having_filter_stmt_) {
+    delete having_filter_stmt_;
+    having_filter_stmt_ = nullptr;
+  }
   for (auto &se : select_exprs_) {
     delete se.expr;
     se.expr = nullptr;
@@ -263,7 +267,7 @@ RC SelectStmt::create(Db *db, const SelectSqlNode &select_sql, Stmt *&stmt,
         if (sel_expr.agg_field == "*") {
           agg.field_meta = nullptr;
           agg.table = nullptr;
-          agg.alias = "count(*)";
+          agg.alias = sel_expr.alias.empty() ? "count(*)" : sel_expr.alias;
         } else {
           if (tables.empty()) return RC::INVALID_ARGUMENT;
           Table *table = tables[0];
@@ -276,16 +280,20 @@ RC SelectStmt::create(Db *db, const SelectSqlNode &select_sql, Stmt *&stmt,
           if (field_meta == nullptr) return RC::SCHEMA_FIELD_MISSING;
           agg.field_meta = field_meta;
           agg.table = table;
-          std::string func_name;
-          switch (sel_expr.agg_type) {
-            case AGG_MAX: func_name = "max"; break;
-            case AGG_MIN: func_name = "min"; break;
-            case AGG_COUNT: func_name = "count"; break;
-            case AGG_AVG: func_name = "avg"; break;
-            case AGG_SUM: func_name = "sum"; break;
-            default: func_name = ""; break;
+          if (!sel_expr.alias.empty()) {
+            agg.alias = sel_expr.alias;
+          } else {
+            std::string func_name;
+            switch (sel_expr.agg_type) {
+              case AGG_MAX: func_name = "max"; break;
+              case AGG_MIN: func_name = "min"; break;
+              case AGG_COUNT: func_name = "count"; break;
+              case AGG_AVG: func_name = "avg"; break;
+              case AGG_SUM: func_name = "sum"; break;
+              default: func_name = ""; break;
+            }
+            agg.alias = func_name + "(" + sel_expr.agg_field + ")";
           }
-          agg.alias = func_name + "(" + sel_expr.agg_field + ")";
         }
         agg_fields.push_back(agg);
         continue;
@@ -366,6 +374,22 @@ RC SelectStmt::create(Db *db, const SelectSqlNode &select_sql, Stmt *&stmt,
     return rc;
   }
 
+  FilterStmt *having_filter_stmt = nullptr;
+  if (!select_sql.having.empty()) {
+    rc = FilterStmt::create(db,
+        default_table,
+        &table_map,
+        select_sql.having.data(),
+        static_cast<int>(select_sql.having.size()),
+        having_filter_stmt,
+        outer_table_map);
+    if (rc != RC::SUCCESS) {
+      LOG_WARN("cannot construct having filter stmt");
+      delete filter_stmt;
+      return rc;
+    }
+  }
+
   // 无 FROM 的纯表达式/函数标量（如 select length('a') len1）：走 Calc，避免空 Project 无结果
   const bool no_from_scalar = tables.empty() && query_fields.empty() && !has_aggregation && !select_exprs.empty() &&
                               (filter_stmt == nullptr || filter_stmt->filter_units().empty());
@@ -388,6 +412,7 @@ RC SelectStmt::create(Db *db, const SelectSqlNode &select_sql, Stmt *&stmt,
   select_stmt->tables_.swap(tables);
   select_stmt->query_fields_.swap(query_fields);
   select_stmt->filter_stmt_ = filter_stmt;
+  select_stmt->having_filter_stmt_ = having_filter_stmt;
   select_stmt->agg_fields_.swap(agg_fields);
   select_stmt->has_aggregation_ = has_aggregation;
   select_stmt->order_by_ = select_sql.order_by;

@@ -48,6 +48,8 @@ public:
 	bool has_group_by() const { return !group_by_fields_.empty(); }
 	const std::vector<OrderByNode> &order_by() const { return order_by_; }
 	bool has_order_by() const { return !order_by_.empty(); }
+	bool has_having() const { return having_filter_stmt_ != nullptr; }
+	FilterStmt *having_filter_stmt() const { return having_filter_stmt_; }
 public:
   static RC create(Db *db, const SelectSqlNode &select_sql, Stmt *&stmt,
       std::unordered_map<std::string, Table *> *outer_table_map = nullptr);
@@ -79,6 +81,7 @@ private:
   std::vector<SelectExprNode> select_exprs_;
   std::vector<Table *> tables_;
   FilterStmt *filter_stmt_ = nullptr;
+  FilterStmt *having_filter_stmt_ = nullptr;
   std::vector<AggregationField> agg_fields_;
   bool has_aggregation_ = false;
   std::vector<Field> group_by_fields_;

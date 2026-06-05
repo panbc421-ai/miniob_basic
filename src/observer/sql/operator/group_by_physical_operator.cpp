@@ -1,9 +1,159 @@
 #include "sql/operator/group_by_physical_operator.h"
 #include "sql/expr/tuple.h"
+#include "sql/expr/expression.h"
+#include "sql/stmt/filter_stmt.h"
 #include "storage/record/record.h"
 #include "storage/table/table.h"
 #include "common/log/log.h"
+#include "common/lang/string.h"
 #include <limits>
+#include <memory>
+
+// Tuple view over one GROUP BY result row for HAVING evaluation.
+class PostAggTuple : public Tuple
+{
+public:
+  PostAggTuple(const std::vector<Field> &group_by_fields,
+      const std::vector<AggregationField> &agg_fields,
+      const std::vector<Value> &group_values, const std::vector<Value> &agg_values)
+      : group_by_fields_(group_by_fields),
+        agg_fields_(agg_fields),
+        group_values_(group_values),
+        agg_values_(agg_values)
+  {}
+
+  int cell_num() const override
+  {
+    return static_cast<int>(group_values_.size() + agg_values_.size());
+  }
+
+  RC cell_at(int index, Value &cell) const override
+  {
+    if (index < 0 || index >= cell_num()) {
+      return RC::NOTFOUND;
+    }
+    cell = index < static_cast<int>(group_values_.size()) ? group_values_[index] : agg_values_[index - group_values_.size()];
+    return RC::SUCCESS;
+  }
+
+  RC find_cell(const TupleCellSpec &spec, Value &cell) const override
+  {
+    const char *tbl = spec.table_name();
+    const char *fld = spec.field_name();
+    const char *alias = spec.alias();
+
+    for (size_t i = 0; i < group_by_fields_.size(); i++) {
+      const Field &f = group_by_fields_[i];
+      if ((fld && strcmp(fld, f.field_name()) == 0) &&
+          (common::is_blank(tbl) || strcmp(tbl, f.table_name()) == 0)) {
+        cell = group_values_[i];
+        return RC::SUCCESS;
+      }
+      if (alias && strcmp(alias, f.field_name()) == 0) {
+        cell = group_values_[i];
+        return RC::SUCCESS;
+      }
+    }
+
+    for (size_t i = 0; i < agg_fields_.size(); i++) {
+      const AggregationField &af = agg_fields_[i];
+      if (af.field_meta == nullptr) {
+        continue;
+      }
+      if (fld && strcmp(fld, af.field_meta->name()) == 0) {
+        cell = agg_values_[i];
+        return RC::SUCCESS;
+      }
+      if (alias && strcmp(alias, af.alias.c_str()) == 0) {
+        cell = agg_values_[i];
+        return RC::SUCCESS;
+      }
+      if (alias && af.field_meta && strcmp(alias, af.field_meta->name()) == 0) {
+        cell = agg_values_[i];
+        return RC::SUCCESS;
+      }
+    }
+    return RC::NOTFOUND;
+  }
+
+private:
+  const std::vector<Field> &group_by_fields_;
+  const std::vector<AggregationField> &agg_fields_;
+  const std::vector<Value> &group_values_;
+  const std::vector<Value> &agg_values_;
+};
+
+static RC eval_filter_unit(const FilterUnit *unit, const Tuple &tuple, bool &result)
+{
+  if (unit == nullptr) {
+    result = true;
+    return RC::SUCCESS;
+  }
+  if (unit->has_custom_expr()) {
+    Value v;
+    RC rc = unit->custom_expr()->get_value(tuple, v);
+    if (rc != RC::SUCCESS) {
+      return rc;
+    }
+    result = v.get_boolean();
+    return RC::SUCCESS;
+  }
+  if (unit->is_expr_based()) {
+    Value left_value;
+    Value right_value;
+    RC rc = unit->left_expr()->get_value(tuple, left_value);
+    if (rc != RC::SUCCESS) {
+      return rc;
+    }
+    rc = unit->right_expr()->get_value(tuple, right_value);
+    if (rc != RC::SUCCESS) {
+      return rc;
+    }
+    ComparisonExpr cmp(unit->comp(), std::unique_ptr<Expression>(), std::unique_ptr<Expression>());
+    return cmp.compare_value(left_value, right_value, result);
+  }
+
+  Value left_value;
+  Value right_value;
+  if (unit->left().is_attr) {
+    TupleCellSpec spec(unit->left().field.table_name(), unit->left().field.field_name());
+    RC rc = tuple.find_cell(spec, left_value);
+    if (rc != RC::SUCCESS) {
+      return rc;
+    }
+  } else {
+    left_value = unit->left().value;
+  }
+  if (unit->right().is_attr) {
+    TupleCellSpec spec(unit->right().field.table_name(), unit->right().field.field_name());
+    RC rc = tuple.find_cell(spec, right_value);
+    if (rc != RC::SUCCESS) {
+      return rc;
+    }
+  } else {
+    right_value = unit->right().value;
+  }
+  ComparisonExpr cmp(unit->comp(), std::unique_ptr<Expression>(), std::unique_ptr<Expression>());
+  return cmp.compare_value(left_value, right_value, result);
+}
+
+bool GroupByPhysicalOperator::passes_having(const GroupResult &group) const
+{
+  if (having_filter_ == nullptr || having_filter_->filter_units().empty()) {
+    return true;
+  }
+  PostAggTuple tuple(group_by_fields_, agg_fields_, group.group_values, group.agg_values);
+  for (const FilterUnit *unit : having_filter_->filter_units()) {
+    bool ok = false;
+    if (eval_filter_unit(unit, tuple, ok) != RC::SUCCESS) {
+      return false;
+    }
+    if (!ok) {
+      return false;
+    }
+  }
+  return true;
+}
 
 void GroupByPhysicalOperator::add_group_by(const Field &field)
 {
@@ -121,7 +271,9 @@ RC GroupByPhysicalOperator::next()
         TupleCellSpec spec(af.table->name(), af.field_meta->name(), af.field_meta->name());
         rc = tuple->find_cell(spec, val);
         if (rc != RC::SUCCESS) {
-          // Skip if field not found (e.g., from wrong side of join)
+          continue;
+        }
+        if (val.is_null()) {
           continue;
         }
 
@@ -177,19 +329,25 @@ RC GroupByPhysicalOperator::next()
             result.set_int(acc.counts[i]);
             break;
           case AGG_SUM:
-            if (af.field_meta && af.field_meta->type() == INTS)
+            if (acc.counts[i] == 0) {
+              result.set_null(true);
+            } else if (af.field_meta && af.field_meta->type() == INTS) {
               result.set_int((int)acc.sum_vals[i]);
-            else
+            } else {
               result.set_float((float)acc.sum_vals[i]);
+            }
             break;
           case AGG_AVG:
-            if (acc.counts[i] > 0)
+            if (acc.counts[i] == 0) {
+              result.set_null(true);
+            } else {
               result.set_float((float)(acc.sum_vals[i] / acc.counts[i]));
-            else
-              result.set_float(0);
+            }
             break;
           case AGG_MAX:
-            if (af.field_meta && af.field_meta->type() == CHARS) {
+            if (acc.counts[i] == 0) {
+              result.set_null(true);
+            } else if (af.field_meta && af.field_meta->type() == CHARS) {
               if (acc.has_str_max[i])
                 result.set_string(acc.max_str_vals[i].c_str());
               else
@@ -203,7 +361,9 @@ RC GroupByPhysicalOperator::next()
             }
             break;
           case AGG_MIN:
-            if (af.field_meta && af.field_meta->type() == CHARS) {
+            if (acc.counts[i] == 0) {
+              result.set_null(true);
+            } else if (af.field_meta && af.field_meta->type() == CHARS) {
               if (acc.has_str_min[i])
                 result.set_string(acc.min_str_vals[i].c_str());
               else
@@ -221,6 +381,17 @@ RC GroupByPhysicalOperator::next()
         }
         agg_vals.push_back(result);
       }
+    }
+
+    if (having_filter_ != nullptr) {
+      std::vector<GroupResult> filtered;
+      filtered.reserve(groups_.size());
+      for (const GroupResult &gr : groups_) {
+        if (passes_having(gr)) {
+          filtered.push_back(gr);
+        }
+      }
+      groups_.swap(filtered);
     }
   }
 

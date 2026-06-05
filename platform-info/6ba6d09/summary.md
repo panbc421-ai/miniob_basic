@@ -1,8 +1,10 @@
-# 平台测试结果 — commit `6ba6d09`
+# 平台测试结果 — commit `6ba6d09`（历史基线）
+
+> **注意**：当前基线已更新为 [`768c08c`](../768c08c/summary.md)（240/500）。本文件保留作对比参考。
 
 **Commit**: `6ba6d09841d8fbb92f56dd1fdc4da7ff620910fa`
 **Message**: fix: 复合索引仅前缀列等值才走IndexScan，避免非前缀扫描崩溃
-**总分**: 250 / 500
+**总分**: **160 / 500**（detail 所得分逐项相加；此前误写为 250）
 
 **图例**（来自题面）：
 - `-` 开头 = **应该输出但我们的代码没有输出**（漏 / missing）
@@ -12,20 +14,20 @@
 
 ## 已通过 (10/25)
 
-| 题目 | 分数 |
-|------|------|
-| aggregation-func | 10 |
-| basic | 10 |
-| big-order-by | 30 |
-| date | 10 |
-| drop-table | 10 |
-| join-tables | 20 |
-| like | 10 |
-| simple-sub-query | 20 |
-| update | 10 |
-| update-mvcc | 30 |
+| 题目 | 分数 | 所得分 |
+|------|------|--------|
+| aggregation-func | 10 | 10 |
+| basic | 10 | 10 |
+| big-order-by | 30 | 30 |
+| date | 10 | 10 |
+| drop-table | 10 | 10 |
+| join-tables | 20 | 20 |
+| like | 10 | 10 |
+| simple-sub-query | 20 | 20 |
+| update | 10 | 10 |
+| update-mvcc | 30 | 30 |
 
-## 未通过 (15/25, 缺 250 分)
+## 未通过 (15/25, 缺 340 分)
 
 ---
 

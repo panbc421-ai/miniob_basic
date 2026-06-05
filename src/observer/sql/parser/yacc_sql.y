@@ -126,6 +126,7 @@ ArithmeticExpr *create_arithmetic_expression(ArithmeticExpr::Type type,
         ASC
         AS
         GROUP
+        HAVING
         EQ
         LT
         GT
@@ -223,6 +224,7 @@ ArithmeticExpr *create_arithmetic_expression(ArithmeticExpr::Type type,
 %type <join_clause>         join_clause
 %type <rel_attr_list>       group_by_clause
 %type <rel_attr_list>       group_by_list
+%type <condition_list>      having_clause
 %type <string_list>         id_list
 %type <update_assign>       update_assign
 %type <update_assign_list>  update_assign_list
@@ -668,7 +670,7 @@ alias_opt:
     ;
 
 select_stmt:        /*  select 语句的语法解析树*/
-    SELECT select_expr_list where group_by_clause order_by_clause
+    SELECT select_expr_list where group_by_clause having_clause order_by_clause
     {
       $$ = new ParsedSqlNode(SCF_SELECT);
       if ($2 != nullptr) {
@@ -687,12 +689,18 @@ select_stmt:        /*  select 语句的语法解析树*/
         delete $4;
       }
       if ($5 != nullptr) {
-        std::reverse($5->begin(), $5->end());
-        $$->selection.order_by.swap(*$5);
+        for (auto &c : *$5) {
+          $$->selection.having.emplace_back(std::move(c));
+        }
         delete $5;
       }
+      if ($6 != nullptr) {
+        std::reverse($6->begin(), $6->end());
+        $$->selection.order_by.swap(*$6);
+        delete $6;
+      }
     }
-    | SELECT select_expr_list FROM ID alias_opt join_clause where group_by_clause order_by_clause
+    | SELECT select_expr_list FROM ID alias_opt join_clause where group_by_clause having_clause order_by_clause
     {
       $$ = new ParsedSqlNode(SCF_SELECT);
       if ($2 != nullptr) {
@@ -728,14 +736,20 @@ select_stmt:        /*  select 语句的语法解析树*/
         delete $8;
       }
       if ($9 != nullptr) {
-        std::reverse($9->begin(), $9->end());
-        $$->selection.order_by.swap(*$9);
+        for (auto &c : *$9) {
+          $$->selection.having.emplace_back(std::move(c));
+        }
         delete $9;
+      }
+      if ($10 != nullptr) {
+        std::reverse($10->begin(), $10->end());
+        $$->selection.order_by.swap(*$10);
+        delete $10;
       }
       free($4);
       if ($5) free($5);
     }
-    | SELECT select_attr FROM ID alias_opt join_clause where group_by_clause order_by_clause
+    | SELECT select_attr FROM ID alias_opt join_clause where group_by_clause having_clause order_by_clause
     {
       $$ = new ParsedSqlNode(SCF_SELECT);
       if ($2 != nullptr) {
@@ -770,9 +784,15 @@ select_stmt:        /*  select 语句的语法解析树*/
         delete $8;
       }
       if ($9 != nullptr) {
-        std::reverse($9->begin(), $9->end());
-        $$->selection.order_by.swap(*$9);
+        for (auto &c : *$9) {
+          $$->selection.having.emplace_back(std::move(c));
+        }
         delete $9;
+      }
+      if ($10 != nullptr) {
+        std::reverse($10->begin(), $10->end());
+        $$->selection.order_by.swap(*$10);
+        delete $10;
       }
       free($4);
       if ($5) free($5);
@@ -835,6 +855,10 @@ expression:
       $$ = new SubQueryExpr(sel);
       $$->set_name(token_name(sql_string, &@$));
       delete $2;
+    }
+    | agg_expr {
+      $$ = new AggregationExpr($1->aggregation_type, $1->relation_name, $1->attribute_name);
+      delete $1;
     }
     | ID LBRACE expression_list RBRACE {
       std::vector<std::unique_ptr<Expression>> args;
@@ -922,13 +946,22 @@ select_expr_item:
       $$->alias = $2 ? $2 : $1->name();
       if ($2) free($2);
     }
-    | agg_expr
+    | agg_expr alias_opt
     {
       $$ = new SelectExprNode;
       $$->agg_type = $1->aggregation_type;
       $$->agg_field = $1->attribute_name;
       $$->agg_table = $1->relation_name;
-      $$->alias = $1->attribute_name;
+      if ($2) {
+        $$->alias = $2;
+        free($2);
+      } else if ($1->attribute_name == "*") {
+        $$->alias = "count(*)";
+      } else if (!common::is_blank($1->relation_name.c_str())) {
+        $$->alias = $1->relation_name + "." + $1->attribute_name;
+      } else {
+        $$->alias = $1->attribute_name;
+      }
       delete $1;
     }
     | ID DOT '*'
@@ -1076,6 +1109,16 @@ group_by_list:
       }
       $$->emplace_back(*$1);
       delete $1;
+    }
+    ;
+having_clause:
+    /* empty */
+    {
+      $$ = nullptr;
+    }
+    | HAVING condition_list
+    {
+      $$ = $2;
     }
     ;
 condition_list:

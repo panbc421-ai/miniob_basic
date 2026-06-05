@@ -1,19 +1,39 @@
 # 修复日志（commit ↔ 改动 映射）
 
-> 每条记录一个 commit 及其针对的题目/改动，便于平台提测后定位回归。
-> 基线平台结果见 `6ba6d09/summary.md`（250/500）。
+> 每条记录一个 commit 及其针对的题目/改动，便于平台提测后定位回归。  
+> **当前基线**：[`768c08c/summary.md`](768c08c/summary.md)（**240/500**，13 题满分）。
 
-| commit | 题目 | 改动摘要 | 本地验证 |
+| commit | 题目 | 改动摘要 | 平台验证 |
 |--------|------|----------|----------|
-| `6ba6d09` | (基线) | 平台 250/500，15 题未过 | — |
-| `68a7d3e` | null | 新增 `IS NULL` / `IS NOT NULL` 词法+语法+求值；常量 `9 is null` 不再 FAILURE 而返回空集 | ✅ 本地 socket 复现全部通过（含 count/avg 跳过 null），回归无影响 |
-| `d364437` | order-by | sort 比较器增加 NULL 处理：NULL 视为最小，升序排最前、降序排最后 | ✅ `order by id` 输出 `NULL,NULL,2,2,5,6,6,22` |
-| `f1ebb06` | update-select | UPDATE 支持多列 SET（`SET a=v, b=v WHERE ...`）及 `col=(标量子查询)`；UpdateSqlNode 改为 assignments 列表，executor 用 make_record 重建行（正确处理 NULL/char 填充/索引） | ✅ 多列只改命中行、单列回归正常、子查询取值正确 |
-| (待提交) | alias | 支持 `rel.*` 星号展开（语法 `ID DOT '*'` + select_stmt 展开为该表全部列）。**行值已正确**（6 行匹配） | ⚠️ 表头：显式别名(num/age)与 t2.* 的列名格式待平台结果确认后精确对齐；当前输出 `表名.列名` |
+| `6ba6d09` | (历史基线) | 160/500，10 题满分 | — |
+| `68a7d3e` | null | 新增 `IS NULL` / `IS NOT NULL` 词法+语法+求值 | ❌ 仍 0（平台测 `min(num)`→NULL，非 IS NULL） |
+| `d364437` | order-by | sort 比较器 NULL 视为最小 | ✅ 0→20 |
+| `f1ebb06` | update-select | 多列 SET + 标量子查询；executor 用 make_record | ❌ 仍 0（平台换了 SQL） |
+| `7fd131d` | alias | `rel.*` 星号展开 | ❌ 仍 0（平台换了 SQL，测 JOIN 聚合） |
+| `768c08c` | function | 无 FROM 标量 SELECT→CALC（`parse.cpp`） | ❌ 仍 0；**此后作为新基线** |
 
-| (待提交) | function/基础 | 提交工作区里既有但未提交的 `parse.cpp`：无 FROM 的标量 SELECT（如 `select length('a') l1, length('b') l2`）在 parse 阶段改写为 CALC。**确保平台构建 == 本地已验证状态** | ✅ 本地 socket `36 \| 12` 正确 |
+完整说明见 [`CHANGELOG-6ba6d09-to-768c08c.md`](CHANGELOG-6ba6d09-to-768c08c.md)。  
+分析错误与对比复盘见 [`ANALYSIS-REVIEW.md`](ANALYSIS-REVIEW.md)。
 
-## 重要环境说明
-- 平台测试很可能曾因 **构建 OOM** 失败而跑的是旧二进制（commit 链中有 `build.sh -j4 避免平台 OOM`、`触发平台重新编译`）。`function` 在本地 CLI 和 socket 两种协议下都输出 `36 | 12` 正确，但平台显示 0 分——疑似平台未成功构建 6ba6d09。
-- 本地构建/测试环境：WSL Ubuntu-22.04 + gcc 11.4，依赖已 `build.sh init` 装入 `/usr/local`。
-- 测试方式：`platform-info/_local/sockrun.py`（忠实复刻平台 unix-socket + PLAIN 协议）。
+## 待修复（相对基线 `768c08c`，12 题 260 分）
+
+| 题目 | 分值 | 优先级 |
+|------|------|--------|
+| null | 20 | P0 — `MIN` 全 NULL 返回 NULL |
+| function | 20 | P0 — length + CALC 平台路径 |
+| group-by | 20 | P1 — HAVING |
+| alias | 20 | P1 — JOIN 聚合别名 |
+| update-select | 20 | P1 — 子查询 SET |
+| create-view | 20 | P2 |
+| create-table-select | 20 | P2 |
+| unique | 20 | P2 |
+| multi-index | 20 | P2 |
+| expression | 20 | P3 |
+| complex-sub-query | 30 | P3 |
+| text | 20 | P3 |
+
+## 环境说明
+
+- 本地：WSL Ubuntu-22.04 + gcc 11.4，`build.sh init` 依赖在 `/usr/local`
+- 测试：`platform-info/_local/sockrun.py`（unix-socket + PLAIN 协议）
+- `big-query` / `big-write` 在 `6ba6d09`→`768c08c` 间意外满分（+60），非上述 commit 明确修复内容

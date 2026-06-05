@@ -106,24 +106,25 @@ extern int yydebug;
     ASC = 307,                     /* ASC  */
     AS = 308,                      /* AS  */
     GROUP = 309,                   /* GROUP  */
-    EQ = 310,                      /* EQ  */
-    LT = 311,                      /* LT  */
-    GT = 312,                      /* GT  */
-    LE = 313,                      /* LE  */
-    GE = 314,                      /* GE  */
-    NE = 315,                      /* NE  */
-    IN = 316,                      /* IN  */
-    EXISTS = 317,                  /* EXISTS  */
-    UNIQUE = 318,                  /* UNIQUE  */
-    NULL_T = 319,                  /* NULL_T  */
-    NULLABLE_T = 320,              /* NULLABLE_T  */
-    TEXT_T = 321,                  /* TEXT_T  */
-    IS = 322,                      /* IS  */
-    NUMBER = 323,                  /* NUMBER  */
-    FLOAT = 324,                   /* FLOAT  */
-    ID = 325,                      /* ID  */
-    SSS = 326,                     /* SSS  */
-    UMINUS = 327                   /* UMINUS  */
+    HAVING = 310,                  /* HAVING  */
+    EQ = 311,                      /* EQ  */
+    LT = 312,                      /* LT  */
+    GT = 313,                      /* GT  */
+    LE = 314,                      /* LE  */
+    GE = 315,                      /* GE  */
+    NE = 316,                      /* NE  */
+    IN = 317,                      /* IN  */
+    EXISTS = 318,                  /* EXISTS  */
+    UNIQUE = 319,                  /* UNIQUE  */
+    NULL_T = 320,                  /* NULL_T  */
+    NULLABLE_T = 321,              /* NULLABLE_T  */
+    TEXT_T = 322,                  /* TEXT_T  */
+    IS = 323,                      /* IS  */
+    NUMBER = 324,                  /* NUMBER  */
+    FLOAT = 325,                   /* FLOAT  */
+    ID = 326,                      /* ID  */
+    SSS = 327,                     /* SSS  */
+    UMINUS = 328                   /* UMINUS  */
   };
   typedef enum yytokentype yytoken_kind_t;
 #endif
@@ -132,7 +133,7 @@ extern int yydebug;
 #if ! defined YYSTYPE && ! defined YYSTYPE_IS_DECLARED
 union YYSTYPE
 {
-#line 144 "yacc_sql.y"
+#line 145 "yacc_sql.y"
 
   ParsedSqlNode *                   sql_node;
   ConditionSqlNode *                condition;
@@ -160,7 +161,7 @@ union YYSTYPE
   UpdateAssignmentNode *            update_assign;
   std::vector<UpdateAssignmentNode> * update_assign_list;
 
-#line 164 "yacc_sql.hpp"
+#line 165 "yacc_sql.hpp"
 
 };
 typedef union YYSTYPE YYSTYPE;

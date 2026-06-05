@@ -89,6 +89,10 @@ RC OptimizeStage::handle_request(SQLStageEvent *sql_event)
               af.alias);
         }
 
+        if (select_stmt->has_having()) {
+          gb_oper->set_having_filter(select_stmt->having_filter_stmt());
+        }
+
         gb_oper->add_child(std::move(physical_operator));
         physical_operator.reset(gb_oper);
       } else {

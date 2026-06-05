@@ -110,6 +110,7 @@ SUM                                     RETURN_TOKEN(SUM);
 FROM                                    RETURN_TOKEN(FROM);
 WHERE                                   RETURN_TOKEN(WHERE);
 GROUP                                   RETURN_TOKEN(GROUP);
+HAVING                                  RETURN_TOKEN(HAVING);
 AND                                     RETURN_TOKEN(AND);
 LIKE                                    RETURN_TOKEN(LIKE);
 NOT                                     RETURN_TOKEN(NOT);

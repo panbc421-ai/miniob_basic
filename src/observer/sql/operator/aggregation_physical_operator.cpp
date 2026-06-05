@@ -57,6 +57,7 @@ RC AggregationPhysicalOperator::next()
       TupleCellSpec spec(af.table->name(), af.field_meta->name(), af.field_meta->name());
       rc = tuple->find_cell(spec, val);
       if (rc != RC::SUCCESS) continue;
+      if (val.is_null()) continue;
 
       AttrType attr_type = val.attr_type();
       if (attr_type == INTS || attr_type == FLOATS) {
@@ -108,19 +109,25 @@ RC AggregationPhysicalOperator::next()
         result.set_int(counts[i]);
         break;
       case AGG_SUM:
-        if (af.field_meta && af.field_meta->type() == INTS)
+        if (counts[i] == 0) {
+          result.set_null(true);
+        } else if (af.field_meta && af.field_meta->type() == INTS) {
           result.set_int((int)sum_vals[i]);
-        else
+        } else {
           result.set_float((float)sum_vals[i]);
+        }
         break;
       case AGG_AVG:
-        if (counts[i] > 0)
+        if (counts[i] == 0) {
+          result.set_null(true);
+        } else {
           result.set_float((float)(sum_vals[i] / counts[i]));
-        else
-          result.set_float(0);
+        }
         break;
       case AGG_MAX:
-        if (af.field_meta && af.field_meta->type() == CHARS) {
+        if (counts[i] == 0) {
+          result.set_null(true);
+        } else if (af.field_meta && af.field_meta->type() == CHARS) {
           if (has_str_max[i])
             result.set_string(max_str_vals[i].c_str());
           else
@@ -134,7 +141,9 @@ RC AggregationPhysicalOperator::next()
         }
         break;
       case AGG_MIN:
-        if (af.field_meta && af.field_meta->type() == CHARS) {
+        if (counts[i] == 0) {
+          result.set_null(true);
+        } else if (af.field_meta && af.field_meta->type() == CHARS) {
           if (has_str_min[i])
             result.set_string(min_str_vals[i].c_str());
           else

@@ -8,6 +8,8 @@
 #include "sql/expr/tuple.h"
 #include "storage/field/field.h"
 
+class FilterStmt;
+
 /**
  * @brief GROUP BY 物理算子
  * @ingroup PhysicalOperator
@@ -32,12 +34,13 @@ public:
   void add_group_by(const Field &field);
   void add_aggregation(AggregationType agg_type, const Table *table,
                        const FieldMeta *field_meta, const std::string &alias);
+  void set_having_filter(FilterStmt *having_filter) { having_filter_ = having_filter; }
 
 private:
   std::vector<Field> group_by_fields_;
   std::vector<AggregationField> agg_fields_;
+  FilterStmt *having_filter_ = nullptr;
 
-  // result storage
   struct GroupResult {
     std::vector<Value> group_values;
     std::vector<Value> agg_values;
@@ -47,4 +50,6 @@ private:
   bool computed_ = false;
 
   ValueListTuple result_tuple_;
+
+  bool passes_having(const GroupResult &group) const;
 };
