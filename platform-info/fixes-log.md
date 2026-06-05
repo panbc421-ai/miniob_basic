@@ -1,8 +1,7 @@
 # 修复日志（commit ↔ 改动 映射）
 
 > 每条记录一个 commit 及其针对的题目/改动，便于平台提测后定位回归。  
-> **当前基线**：[`071909d`](071909d/summary.md)（**260/500**，14 题满分）。  
-> **勿用**：`4f47e69`（~230）、`9d6888d`（group-by 回归）。详见 [`COMMIT-TRACKER.md`](COMMIT-TRACKER.md)。
+> **当前基线**：[`768c08c/summary.md`](768c08c/summary.md)（**240/500**，13 题满分）。
 
 | commit | 题目 | 改动摘要 | 平台验证 |
 |--------|------|----------|----------|
@@ -16,19 +15,7 @@
 完整说明见 [`CHANGELOG-6ba6d09-to-768c08c.md`](CHANGELOG-6ba6d09-to-768c08c.md)。  
 分析错误与对比复盘见 [`ANALYSIS-REVIEW.md`](ANALYSIS-REVIEW.md)。
 
-## 本批工作区改动（相对 `071909d`，待 commit）
-
-| 范围 | 题目 | 状态 |
-|------|------|------|
-| filter_stmt eval + 关联 IN | alias, null, update-select, complex-sub-query | 已实现，待平台 |
-| create-view + CTAS + materialize | create-view, create-table-select | 已实现，待平台 |
-| mvcc delete visit_record | multi-index | 已实现，待平台 |
-| unique 软删索引项跳过 | unique | 已实现，待平台 |
-| join 谓词 interleaving + div NULL | expression | 已实现，待平台 |
-| text 超长拒绝 | text | 已实现，待平台 |
-| function CALC | function | 071909d 已有 + 本地通过 |
-
-## 待修复（相对基线 `071909d`，11 题 240 分）
+## 待修复（相对基线 `768c08c`，12 题 260 分）
 
 | 题目 | 分值 | 优先级 |
 |------|------|--------|

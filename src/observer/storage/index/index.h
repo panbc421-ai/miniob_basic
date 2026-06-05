@@ -82,7 +82,6 @@ public:
 
   void build_record_key(const char *record, char *key) const;
   int  key_length() const { return key_length_; }
-  const std::vector<FieldMeta> &field_metas() const { return field_metas_; }
 
 protected:
   RC init(const IndexMeta &index_meta, const std::vector<const FieldMeta *> &field_metas);

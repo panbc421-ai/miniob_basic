@@ -91,42 +91,40 @@ extern int yydebug;
     FROM = 292,                    /* FROM  */
     WHERE = 293,                   /* WHERE  */
     AND = 294,                     /* AND  */
-    OR = 295,                      /* OR  */
-    VIEW = 296,                    /* VIEW  */
-    LIKE = 297,                    /* LIKE  */
-    NOT = 298,                     /* NOT  */
-    SET = 299,                     /* SET  */
-    INNER = 300,                   /* INNER  */
-    JOIN = 301,                    /* JOIN  */
-    ON = 302,                      /* ON  */
-    LOAD = 303,                    /* LOAD  */
-    DATA = 304,                    /* DATA  */
-    INFILE = 305,                  /* INFILE  */
-    EXPLAIN = 306,                 /* EXPLAIN  */
-    ORDER = 307,                   /* ORDER  */
-    BY = 308,                      /* BY  */
-    ASC = 309,                     /* ASC  */
-    AS = 310,                      /* AS  */
-    GROUP = 311,                   /* GROUP  */
-    HAVING = 312,                  /* HAVING  */
-    EQ = 313,                      /* EQ  */
-    LT = 314,                      /* LT  */
-    GT = 315,                      /* GT  */
-    LE = 316,                      /* LE  */
-    GE = 317,                      /* GE  */
-    NE = 318,                      /* NE  */
-    IN = 319,                      /* IN  */
-    EXISTS = 320,                  /* EXISTS  */
-    UNIQUE = 321,                  /* UNIQUE  */
-    NULL_T = 322,                  /* NULL_T  */
-    NULLABLE_T = 323,              /* NULLABLE_T  */
-    TEXT_T = 324,                  /* TEXT_T  */
-    IS = 325,                      /* IS  */
-    NUMBER = 326,                  /* NUMBER  */
-    FLOAT = 327,                   /* FLOAT  */
-    ID = 328,                      /* ID  */
-    SSS = 329,                     /* SSS  */
-    UMINUS = 330                   /* UMINUS  */
+    LIKE = 295,                    /* LIKE  */
+    NOT = 296,                     /* NOT  */
+    SET = 297,                     /* SET  */
+    INNER = 298,                   /* INNER  */
+    JOIN = 299,                    /* JOIN  */
+    ON = 300,                      /* ON  */
+    LOAD = 301,                    /* LOAD  */
+    DATA = 302,                    /* DATA  */
+    INFILE = 303,                  /* INFILE  */
+    EXPLAIN = 304,                 /* EXPLAIN  */
+    ORDER = 305,                   /* ORDER  */
+    BY = 306,                      /* BY  */
+    ASC = 307,                     /* ASC  */
+    AS = 308,                      /* AS  */
+    GROUP = 309,                   /* GROUP  */
+    HAVING = 310,                  /* HAVING  */
+    EQ = 311,                      /* EQ  */
+    LT = 312,                      /* LT  */
+    GT = 313,                      /* GT  */
+    LE = 314,                      /* LE  */
+    GE = 315,                      /* GE  */
+    NE = 316,                      /* NE  */
+    IN = 317,                      /* IN  */
+    EXISTS = 318,                  /* EXISTS  */
+    UNIQUE = 319,                  /* UNIQUE  */
+    NULL_T = 320,                  /* NULL_T  */
+    NULLABLE_T = 321,              /* NULLABLE_T  */
+    TEXT_T = 322,                  /* TEXT_T  */
+    IS = 323,                      /* IS  */
+    NUMBER = 324,                  /* NUMBER  */
+    FLOAT = 325,                   /* FLOAT  */
+    ID = 326,                      /* ID  */
+    SSS = 327,                     /* SSS  */
+    UMINUS = 328                   /* UMINUS  */
   };
   typedef enum yytokentype yytoken_kind_t;
 #endif
@@ -135,7 +133,7 @@ extern int yydebug;
 #if ! defined YYSTYPE && ! defined YYSTYPE_IS_DECLARED
 union YYSTYPE
 {
-#line 147 "yacc_sql.y"
+#line 145 "yacc_sql.y"
 
   ParsedSqlNode *                   sql_node;
   ConditionSqlNode *                condition;
@@ -163,7 +161,7 @@ union YYSTYPE
   UpdateAssignmentNode *            update_assign;
   std::vector<UpdateAssignmentNode> * update_assign_list;
 
-#line 167 "yacc_sql.hpp"
+#line 165 "yacc_sql.hpp"
 
 };
 typedef union YYSTYPE YYSTYPE;

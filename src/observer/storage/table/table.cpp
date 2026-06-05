@@ -13,14 +13,12 @@ See the Mulan PSL v2 for more details. */
 //
 
 #include <limits.h>
-#include <limits>
 #include <string.h>
 #include <algorithm>
 
 #include "common/defs.h"
 #include "storage/table/table.h"
 #include "storage/table/table_meta.h"
-#include "storage/field/field.h"
 #include "common/log/log.h"
 #include "common/lang/string.h"
 #include "storage/buffer/disk_buffer_pool.h"
@@ -219,59 +217,20 @@ RC Table::insert_record(Record &record)
 {
   RC rc = RC::SUCCESS;
 
-  // 检查唯一索引约束（NULL 键不参与唯一性检测）
+  // 检查唯一索引约束
   for (Index *index : indexes_) {
-    if (!index->index_meta().is_unique()) {
-      continue;
-    }
-    bool key_has_null = false;
-    for (const FieldMeta &fm : index->field_metas()) {
-      if (!fm.nullable()) {
-        continue;
-      }
-      const char *fdata = record.data() + fm.offset();
-      bool all_zero = true;
-      for (int b = 0; b < fm.len(); b++) {
-        if (fdata[b] != 0) {
-          all_zero = false;
-          break;
-        }
-      }
-      if (all_zero) {
-        key_has_null = true;
-        break;
-      }
-    }
-    if (key_has_null) {
-      continue;
-    }
-    std::vector<char> key(index->key_length());
-    index->build_record_key(record.data(), key.data());
-    IndexScanner *scanner = index->create_scanner(key.data(), index->key_length(), true, key.data(), index->key_length(), true);
-    if (scanner != nullptr) {
-      RID rid;
-      const std::pair<const FieldMeta *, int> trx_f = table_meta_.trx_fields();
-      Field end_field;
-      if (trx_f.second >= 2) {
-        end_field.set_table(this);
-        end_field.set_field(&trx_f.first[1]);
-      }
-      while (scanner->next_entry(&rid) == RC::SUCCESS) {
-        Record exist;
-        RC visit_rc = get_record(rid, exist);
-        if (visit_rc != RC::SUCCESS) {
-          continue;
-        }
-        if (trx_f.second >= 2) {
-          int32_t end_xid = end_field.get_int(exist);
-          if (end_xid != std::numeric_limits<int32_t>::max()) {
-            continue;  // soft-deleted or in-flight delete; index entry stale
-          }
-        }
+    if (index->index_meta().is_unique()) {
+      std::vector<char> key(index->key_length());
+      index->build_record_key(record.data(), key.data());
+      IndexScanner *scanner = index->create_scanner(key.data(), index->key_length(), true, key.data(), index->key_length(), true);
+      if (scanner != nullptr) {
+        RID rid;
+        bool found = (scanner->next_entry(&rid) == RC::SUCCESS);
         scanner->destroy();
-        return RC::RECORD_DUPLICATE_KEY;
+        if (found) {
+          return RC::RECORD_DUPLICATE_KEY;
+        }
       }
-      scanner->destroy();
     }
   }
 
@@ -406,12 +365,9 @@ RC Table::make_record(int value_num, const Value *values, Record &record)
     size_t copy_len = field->len();
     if (field->type() == CHARS || field->type() == TEXTS) {
       const size_t data_len = value.length();
-      const size_t max_data = field->len() > 0 ? static_cast<size_t>(field->len() - 1) : 0;
-      if (data_len > max_data) {
-        LOG_WARN("string too long for field %s: len=%zu max=%zu", field->name(), data_len, max_data);
-        return RC::INVALID_ARGUMENT;
+      if (copy_len > data_len) {
+        copy_len = data_len + 1;
       }
-      copy_len = data_len + 1;
     }
     memcpy(record_data + field->offset(), value.data(), copy_len);
   }
