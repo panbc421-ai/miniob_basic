@@ -1,0 +1,13 @@
+create table t_group_by (id int not null, score float not null, name char(1) null);
+insert into t_group_by VALUES (6, 1.94, 'A');
+insert into t_group_by VALUES (2, 2.67, 'S');
+insert into t_group_by VALUES (7, 4.45, '3');
+insert into t_group_by VALUES (1, 1.68, 'Z');
+insert into t_group_by VALUES (2, 3.28, 'Y');
+insert into t_group_by VALUES (4, 6.84, 'X');
+insert into t_group_by VALUES (5, 3.35, 'W');
+insert into t_group_by VALUES (6, 11.88, 'V');
+insert into t_group_by VALUES (7, 8.70, 'U');
+insert into t_group_by VALUES (9, 8.68, 'T');
+select id, sum(score) from t_group_by group by id;
+exit;

@@ -271,6 +271,10 @@ RC GroupByPhysicalOperator::next()
         TupleCellSpec spec(af.table->name(), af.field_meta->name(), af.field_meta->name());
         rc = tuple->find_cell(spec, val);
         if (rc != RC::SUCCESS) {
+          TupleCellSpec spec2("", af.field_meta->name(), af.field_meta->name());
+          rc = tuple->find_cell(spec2, val);
+        }
+        if (rc != RC::SUCCESS) {
           continue;
         }
         if (val.is_null()) {
