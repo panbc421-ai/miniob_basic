@@ -856,10 +856,6 @@ expression:
       $$->set_name(token_name(sql_string, &@$));
       delete $2;
     }
-    | agg_expr {
-      $$ = new AggregationExpr($1->aggregation_type, $1->relation_name, $1->attribute_name);
-      delete $1;
-    }
     | ID LBRACE expression_list RBRACE {
       std::vector<std::unique_ptr<Expression>> args;
       if ($3 != nullptr) {
@@ -888,6 +884,10 @@ expression:
       $$->set_name($3);
       free($1);
       free($3);
+    }
+    | agg_expr {
+      $$ = new AggregationExpr($1->aggregation_type, $1->relation_name, $1->attribute_name);
+      delete $1;
     }
     ;
 
@@ -1266,6 +1266,14 @@ condition:
       $$->left_expr = $1;
       $$->right_expr = $3;
       $$->comp = $2;
+    }
+    | agg_expr comp_op expression
+    {
+      $$ = new ConditionSqlNode;
+      $$->left_expr = new AggregationExpr($1->aggregation_type, $1->relation_name, $1->attribute_name);
+      delete $1;
+      $$->comp = $2;
+      $$->right_expr = $3;
     }
     ;
 

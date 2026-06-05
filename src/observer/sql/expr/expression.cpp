@@ -16,6 +16,7 @@ See the Mulan PSL v2 for more details. */
 #include "sql/expr/tuple.h"
 #include "sql/parser/parse_defs.h"
 #include "storage/table/table.h"
+#include "storage/field/field_meta.h"
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -25,11 +26,76 @@ using namespace std;
 
 thread_local const Tuple *g_outer_tuple = nullptr;
 
+ColumnAliasMap build_column_alias_map(const SelectSqlNode &sel,
+    unordered_map<string, Table *> &table_map, Table *default_table)
+{
+  ColumnAliasMap result;
+  for (const SelectExprNode &item : sel.expressions) {
+    if (item.alias.empty() || item.expr == nullptr) {
+      continue;
+    }
+    if (item.expr->type() != ExprType::UNBOUND_FIELD) {
+      continue;
+    }
+    auto *uf = static_cast<UnboundFieldExpr *>(item.expr);
+    Table *table = default_table;
+    const string &tn = uf->table_name();
+    if (!tn.empty()) {
+      auto it = table_map.find(tn);
+      if (it != table_map.end()) {
+        table = it->second;
+      }
+    }
+    if (table == nullptr) {
+      continue;
+    }
+    const FieldMeta *fm = table->table_meta().field(uf->field_name().c_str());
+    if (fm == nullptr) {
+      continue;
+    }
+    ColumnAliasBinding binding;
+    binding.table_name = table->name();
+    binding.field_name = uf->field_name();
+    binding.field_meta = fm;
+    result[item.alias] = binding;
+  }
+  return result;
+}
+
+static bool try_resolve_outer_field(const string &field_name,
+    unordered_map<string, Table *> *outer_table_map, ColumnAliasMap *outer_column_aliases,
+    unique_ptr<Expression> &expr)
+{
+  if (outer_column_aliases != nullptr) {
+    auto alias_it = outer_column_aliases->find(field_name);
+    if (alias_it != outer_column_aliases->end()) {
+      auto *cf = new CorrelatedFieldExpr(alias_it->second.table_name, alias_it->second.field_name,
+          alias_it->second.field_meta);
+      cf->set_name(expr->name());
+      expr.reset(cf);
+      return true;
+    }
+  }
+  if (outer_table_map != nullptr) {
+    for (const auto &kv : *outer_table_map) {
+      const FieldMeta *fm = kv.second->table_meta().field(field_name.c_str());
+      if (fm != nullptr) {
+        auto *cf = new CorrelatedFieldExpr(kv.second->name(), field_name, fm);
+        cf->set_name(expr->name());
+        expr.reset(cf);
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
 // 递归解析表达式树中的 UnboundFieldExpr → FieldExpr
 RC resolve_expression(unique_ptr<Expression> &expr,
     Table *default_table,
     unordered_map<string, Table *> *table_map,
-    unordered_map<string, Table *> *outer_table_map)
+    unordered_map<string, Table *> *outer_table_map,
+    ColumnAliasMap *outer_column_aliases)
 {
   if (expr == nullptr) return RC::SUCCESS;
 
@@ -55,12 +121,18 @@ RC resolve_expression(unique_ptr<Expression> &expr,
       }
       if (table == nullptr) table = default_table;
       if (table == nullptr) {
+        if (try_resolve_outer_field(field_name, outer_table_map, outer_column_aliases, expr)) {
+          return RC::SUCCESS;
+        }
         LOG_WARN("cannot resolve field %s.%s: no table",
                  table_name.c_str(), field_name.c_str());
         return RC::SCHEMA_FIELD_MISSING;
       }
       const FieldMeta *fm = table->table_meta().field(field_name.c_str());
       if (fm == nullptr) {
+        if (try_resolve_outer_field(field_name, outer_table_map, outer_column_aliases, expr)) {
+          return RC::SUCCESS;
+        }
         LOG_WARN("no such field %s in table %s",
                  field_name.c_str(), table->name());
         return RC::SCHEMA_FIELD_MISSING;
@@ -79,31 +151,31 @@ RC resolve_expression(unique_ptr<Expression> &expr,
     }
     case ExprType::ARITHMETIC: {
       auto *arith = static_cast<ArithmeticExpr *>(expr.get());
-      RC rc = resolve_expression(arith->left(), default_table, table_map, outer_table_map);
+      RC rc = resolve_expression(arith->left(), default_table, table_map, outer_table_map, outer_column_aliases);
       if (rc != RC::SUCCESS) return rc;
       if (arith->right()) {
-        rc = resolve_expression(arith->right(), default_table, table_map, outer_table_map);
+        rc = resolve_expression(arith->right(), default_table, table_map, outer_table_map, outer_column_aliases);
         if (rc != RC::SUCCESS) return rc;
       }
       return RC::SUCCESS;
     }
     case ExprType::COMPARISON: {
       auto *cmp = static_cast<ComparisonExpr *>(expr.get());
-      RC rc = resolve_expression(cmp->left(), default_table, table_map, outer_table_map);
+      RC rc = resolve_expression(cmp->left(), default_table, table_map, outer_table_map, outer_column_aliases);
       if (rc != RC::SUCCESS) return rc;
-      return resolve_expression(cmp->right(), default_table, table_map, outer_table_map);
+      return resolve_expression(cmp->right(), default_table, table_map, outer_table_map, outer_column_aliases);
     }
     case ExprType::CONJUNCTION: {
       auto *conj = static_cast<ConjunctionExpr *>(expr.get());
       for (auto &child : conj->children()) {
-        RC rc = resolve_expression(child, default_table, table_map, outer_table_map);
+        RC rc = resolve_expression(child, default_table, table_map, outer_table_map, outer_column_aliases);
         if (rc != RC::SUCCESS) return rc;
       }
       return RC::SUCCESS;
     }
     case ExprType::CAST: {
       auto *cast = static_cast<CastExpr *>(expr.get());
-      return resolve_expression(cast->child(), default_table, table_map, outer_table_map);
+      return resolve_expression(cast->child(), default_table, table_map, outer_table_map, outer_column_aliases);
     }
     case ExprType::AGGREGATION: {
       auto *agg = static_cast<AggregationExpr *>(expr.get());
@@ -139,7 +211,7 @@ RC resolve_expression(unique_ptr<Expression> &expr,
     case ExprType::FUNCTION: {
       auto *fn = static_cast<FunctionExpr *>(expr.get());
       for (auto &arg : fn->args()) {
-        RC rc = resolve_expression(arg, default_table, table_map, outer_table_map);
+        RC rc = resolve_expression(arg, default_table, table_map, outer_table_map, outer_column_aliases);
         if (rc != RC::SUCCESS) return rc;
       }
       return RC::SUCCESS;
@@ -199,7 +271,11 @@ RC CorrelatedFieldExpr::get_value(const Tuple &tuple, Value &value) const
     LOG_WARN("CorrelatedFieldExpr::get_value called without outer tuple context");
     return RC::INTERNAL;
   }
-  return g_outer_tuple->find_cell(TupleCellSpec(table_name_.c_str(), field_name_.c_str()), value);
+  RC rc = g_outer_tuple->find_cell(TupleCellSpec(table_name_.c_str(), field_name_.c_str()), value);
+  if (rc == RC::SUCCESS) {
+    return rc;
+  }
+  return g_outer_tuple->find_cell(TupleCellSpec(field_name_.c_str()), value);
 }
 
 /////////////////////////////////////////////////////////////////////////////////

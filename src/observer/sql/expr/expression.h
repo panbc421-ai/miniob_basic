@@ -17,6 +17,7 @@ See the Mulan PSL v2 for more details. */
 #include <string.h>
 #include <memory>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include "storage/field/field.h"
@@ -25,13 +26,28 @@ See the Mulan PSL v2 for more details. */
 
 class Tuple;
 class Table;
+class FieldMeta;
+struct SelectSqlNode;
+
+struct ColumnAliasBinding
+{
+  std::string table_name;
+  std::string field_name;
+  const FieldMeta *field_meta = nullptr;
+};
+
+using ColumnAliasMap = std::unordered_map<std::string, ColumnAliasBinding>;
+
+ColumnAliasMap build_column_alias_map(const SelectSqlNode &sel,
+    std::unordered_map<std::string, Table *> &table_map, Table *default_table);
 
 /**
  * @brief 解析表达式树中的 UnboundFieldExpr 为 FieldExpr
  */
 RC resolve_expression(std::unique_ptr<Expression> &expr, Table *default_table,
     std::unordered_map<std::string, Table *> *table_map,
-    std::unordered_map<std::string, Table *> *outer_table_map = nullptr);
+    std::unordered_map<std::string, Table *> *outer_table_map = nullptr,
+    ColumnAliasMap *outer_column_aliases = nullptr);
 
 // Thread-local outer tuple for correlated subquery field evaluation.
 extern thread_local const Tuple *g_outer_tuple;

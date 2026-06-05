@@ -107,8 +107,16 @@ RC OptimizeStage::handle_request(SQLStageEvent *sql_event)
               af.alias);
         }
 
-        agg_oper->add_child(std::move(physical_operator));
-        physical_operator.reset(agg_oper);
+        if (!select_stmt->select_exprs().empty() &&
+            physical_operator->type() == PhysicalOperatorType::PROJECT &&
+            !physical_operator->children().empty()) {
+          std::unique_ptr<PhysicalOperator> scan_tree = std::move(physical_operator->children()[0]);
+          agg_oper->add_child(std::move(scan_tree));
+          physical_operator->children()[0].reset(agg_oper);
+        } else {
+          agg_oper->add_child(std::move(physical_operator));
+          physical_operator.reset(agg_oper);
+        }
       }
     }
 

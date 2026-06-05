@@ -116,11 +116,15 @@ public:
 public:
   static RC create(Db *db, Table *default_table, std::unordered_map<std::string, Table *> *tables,
       const ConditionSqlNode *conditions, int condition_num, FilterStmt *&stmt,
-      std::unordered_map<std::string, Table *> *outer_table_map = nullptr);
+      std::unordered_map<std::string, Table *> *outer_table_map = nullptr,
+      ColumnAliasMap *outer_column_aliases = nullptr,
+      ColumnAliasMap *current_column_aliases = nullptr);
 
   static RC create_filter_unit(Db *db, Table *default_table, std::unordered_map<std::string, Table *> *tables,
       const ConditionSqlNode &condition, FilterUnit *&filter_unit,
-      std::unordered_map<std::string, Table *> *outer_table_map = nullptr);
+      std::unordered_map<std::string, Table *> *outer_table_map = nullptr,
+      ColumnAliasMap *outer_column_aliases = nullptr,
+      ColumnAliasMap *current_column_aliases = nullptr);
 
 private:
   std::vector<FilterUnit *> filter_units_;  // 默认当前都是AND关系

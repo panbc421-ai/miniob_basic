@@ -55,23 +55,30 @@ static void collect_aggregations(Expression *&expr, Table *default_table,
     auto *ae = static_cast<ArithmeticExpr *>(expr);
     auto &left = const_cast<std::unique_ptr<Expression> &>(ae->left());
     auto &right = const_cast<std::unique_ptr<Expression> &>(ae->right());
-    Expression *lptr = left.get();
-    Expression *rptr = right.get();
+    Expression *lptr = left.release();
     collect_aggregations(lptr, default_table, table_map, agg_fields, has_agg);
-    collect_aggregations(rptr, default_table, table_map, agg_fields, has_agg);
+    left.reset(lptr);
+    if (right) {
+      Expression *rptr = right.release();
+      collect_aggregations(rptr, default_table, table_map, agg_fields, has_agg);
+      right.reset(rptr);
+    }
     return;
   }
   if (expr->type() == ExprType::CAST) {
     auto *ce = static_cast<CastExpr *>(expr);
-    Expression *child = ce->child().get();
-    collect_aggregations(child, default_table, table_map, agg_fields, has_agg);
+    auto &child = const_cast<std::unique_ptr<Expression> &>(ce->child());
+    Expression *cptr = child.release();
+    collect_aggregations(cptr, default_table, table_map, agg_fields, has_agg);
+    child.reset(cptr);
     return;
   }
   if (expr->type() == ExprType::FUNCTION) {
     auto *fn = static_cast<FunctionExpr *>(expr);
     for (auto &arg : fn->args()) {
-      Expression *a = arg.get();
-      collect_aggregations(a, default_table, table_map, agg_fields, has_agg);
+      Expression *aptr = arg.release();
+      collect_aggregations(aptr, default_table, table_map, agg_fields, has_agg);
+      arg.reset(aptr);
     }
     return;
   }
@@ -103,7 +110,8 @@ static void wildcard_fields(Table *table, std::vector<Field> &field_metas)
 }
 
 RC SelectStmt::create(Db *db, const SelectSqlNode &select_sql, Stmt *&stmt,
-    std::unordered_map<std::string, Table *> *outer_table_map)
+    std::unordered_map<std::string, Table *> *outer_table_map,
+    ColumnAliasMap *outer_column_aliases)
 {
   if (nullptr == db) {
     LOG_WARN("invalid argument. db is null");
@@ -143,6 +151,8 @@ RC SelectStmt::create(Db *db, const SelectSqlNode &select_sql, Stmt *&stmt,
   if (tables.size() == 1) {
     default_table = tables[0];
   }
+
+  ColumnAliasMap column_aliases = build_column_alias_map(select_sql, table_map, default_table);
 
   std::vector<Field> query_fields;
   bool has_aggregation = false;
@@ -368,7 +378,9 @@ RC SelectStmt::create(Db *db, const SelectSqlNode &select_sql, Stmt *&stmt,
       select_sql.conditions.data(),
       static_cast<int>(select_sql.conditions.size()),
       filter_stmt,
-      outer_table_map);
+      outer_table_map,
+      outer_column_aliases,
+      &column_aliases);
   if (rc != RC::SUCCESS) {
     LOG_WARN("cannot construct filter stmt");
     return rc;
@@ -382,7 +394,9 @@ RC SelectStmt::create(Db *db, const SelectSqlNode &select_sql, Stmt *&stmt,
         select_sql.having.data(),
         static_cast<int>(select_sql.having.size()),
         having_filter_stmt,
-        outer_table_map);
+        outer_table_map,
+        outer_column_aliases,
+        &column_aliases);
     if (rc != RC::SUCCESS) {
       LOG_WARN("cannot construct having filter stmt");
       delete filter_stmt;

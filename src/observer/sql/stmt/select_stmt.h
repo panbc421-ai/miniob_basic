@@ -28,6 +28,7 @@ class Db;
 class Table;
 #include "sql/operator/aggregation_physical_operator.h"
 #include "sql/parser/parse_defs.h"
+#include "sql/expr/expression.h"
 /**
  * @brief 表示select语句
  * @ingroup Statement
@@ -52,7 +53,8 @@ public:
 	FilterStmt *having_filter_stmt() const { return having_filter_stmt_; }
 public:
   static RC create(Db *db, const SelectSqlNode &select_sql, Stmt *&stmt,
-      std::unordered_map<std::string, Table *> *outer_table_map = nullptr);
+      std::unordered_map<std::string, Table *> *outer_table_map = nullptr,
+      ColumnAliasMap *outer_column_aliases = nullptr);
 
 public:
   const std::vector<Table *> &tables() const

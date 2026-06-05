@@ -33,6 +33,10 @@ public:
         cell = cells_[i];
         return RC::SUCCESS;
       }
+      if (spec.field_name()[0] != '\0' && aliases_[i] == spec.field_name()) {
+        cell = cells_[i];
+        return RC::SUCCESS;
+      }
     }
     return RC::NOTFOUND;
   }

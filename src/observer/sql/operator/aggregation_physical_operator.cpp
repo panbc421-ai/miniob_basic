@@ -83,6 +83,9 @@ RC AggregationPhysicalOperator::next()
             has_str_min[i] = true;
           }
         }
+        if (af.agg_type == AGG_MIN || af.agg_type == AGG_MAX || af.agg_type == AGG_SUM) {
+          counts[i]++;
+        }
       } else if (attr_type == DATES) {
         double d = val.get_date();
         if (af.agg_type == AGG_COUNT) {
@@ -90,9 +93,11 @@ RC AggregationPhysicalOperator::next()
         }
         if (af.agg_type == AGG_MAX) {
           if (d > max_num_vals[i]) max_num_vals[i] = d;
+          counts[i]++;
         }
         if (af.agg_type == AGG_MIN) {
           if (d < min_num_vals[i]) min_num_vals[i] = d;
+          counts[i]++;
         }
       }
     }
@@ -125,13 +130,13 @@ RC AggregationPhysicalOperator::next()
         }
         break;
       case AGG_MAX:
-        if (counts[i] == 0) {
-          result.set_null(true);
-        } else if (af.field_meta && af.field_meta->type() == CHARS) {
-          if (has_str_max[i])
-            result.set_string(max_str_vals[i].c_str());
+        if (af.field_meta && af.field_meta->type() == CHARS) {
+          if (!has_str_max[i])
+            result.set_null(true);
           else
-            result.set_string("");
+            result.set_string(max_str_vals[i].c_str());
+        } else if (counts[i] == 0) {
+          result.set_null(true);
         } else if (af.field_meta && af.field_meta->type() == DATES) {
           result.set_date((int)max_num_vals[i]);
         } else if (af.field_meta && af.field_meta->type() == INTS) {
@@ -141,13 +146,13 @@ RC AggregationPhysicalOperator::next()
         }
         break;
       case AGG_MIN:
-        if (counts[i] == 0) {
-          result.set_null(true);
-        } else if (af.field_meta && af.field_meta->type() == CHARS) {
-          if (has_str_min[i])
-            result.set_string(min_str_vals[i].c_str());
+        if (af.field_meta && af.field_meta->type() == CHARS) {
+          if (!has_str_min[i])
+            result.set_null(true);
           else
-            result.set_string("");
+            result.set_string(min_str_vals[i].c_str());
+        } else if (counts[i] == 0) {
+          result.set_null(true);
         } else if (af.field_meta && af.field_meta->type() == DATES) {
           result.set_date((int)min_num_vals[i]);
         } else if (af.field_meta && af.field_meta->type() == INTS) {

@@ -81,8 +81,18 @@ RC ExecuteStage::handle_request_with_physical_operator(SQLStageEvent *sql_event)
         }
       }
     }
-    for (const AggregationField &af : select_stmt->agg_fields()) {
-      schema.append_cell(af.alias.c_str());
+    if (!select_stmt->select_exprs().empty()) {
+      for (const SelectExprNode &se : select_stmt->select_exprs()) {
+        if (!se.alias.empty()) {
+          schema.append_cell(se.alias.c_str());
+        } else if (se.expr != nullptr) {
+          schema.append_cell(se.expr->name().c_str());
+        }
+      }
+    } else {
+      for (const AggregationField &af : select_stmt->agg_fields()) {
+        schema.append_cell(af.alias.c_str());
+      }
     }
   } else {
     bool with_table_name = select_stmt->tables().size() > 1;

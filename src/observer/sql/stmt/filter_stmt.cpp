@@ -34,38 +34,66 @@ static void collect_inner_table_names(const SelectSqlNode &sel, std::set<std::st
   }
 }
 
+static ColumnAliasMap merge_column_alias_maps(ColumnAliasMap *outer_aliases, ColumnAliasMap *current_aliases)
+{
+  ColumnAliasMap merged;
+  if (outer_aliases != nullptr) {
+    merged.insert(outer_aliases->begin(), outer_aliases->end());
+  }
+  if (current_aliases != nullptr) {
+    merged.insert(current_aliases->begin(), current_aliases->end());
+  }
+  return merged;
+}
+
 // Whether an unresolved expression references a table from the outer scope.
 static bool expr_refs_outer_scope(Expression *expr, const std::set<std::string> &inner,
-    const std::unordered_map<std::string, Table *> *outer_tables)
+    const std::unordered_map<std::string, Table *> *outer_tables,
+    const ColumnAliasMap *outer_column_aliases = nullptr)
 {
-  if (expr == nullptr || outer_tables == nullptr) {
+  if (expr == nullptr) {
     return false;
   }
   switch (expr->type()) {
     case ExprType::UNBOUND_FIELD: {
       const auto *uf = static_cast<UnboundFieldExpr *>(expr);
       const std::string &tn = uf->table_name();
-      if (tn.empty()) {
-        return false;
+      const std::string &fn = uf->field_name();
+      if (!tn.empty()) {
+        if (outer_tables == nullptr) {
+          return false;
+        }
+        return inner.find(tn) == inner.end() && outer_tables->find(tn) != outer_tables->end();
       }
-      return inner.find(tn) == inner.end() && outer_tables->find(tn) != outer_tables->end();
+      if (outer_column_aliases != nullptr && outer_column_aliases->find(fn) != outer_column_aliases->end()) {
+        return true;
+      }
+      if (outer_tables != nullptr) {
+        for (const auto &kv : *outer_tables) {
+          if (kv.second->table_meta().field(fn.c_str()) != nullptr) {
+            return true;
+          }
+        }
+      }
+      return false;
     }
     case ExprType::CORRELATED_FIELD:
       return true;
     case ExprType::ARITHMETIC: {
       auto *ae = static_cast<ArithmeticExpr *>(expr);
-      return expr_refs_outer_scope(ae->left().get(), inner, outer_tables) ||
-             (ae->right() != nullptr && expr_refs_outer_scope(ae->right().get(), inner, outer_tables));
+      return expr_refs_outer_scope(ae->left().get(), inner, outer_tables, outer_column_aliases) ||
+             (ae->right() != nullptr &&
+                 expr_refs_outer_scope(ae->right().get(), inner, outer_tables, outer_column_aliases));
     }
     case ExprType::COMPARISON: {
       auto *ce = static_cast<ComparisonExpr *>(expr);
-      return expr_refs_outer_scope(ce->left().get(), inner, outer_tables) ||
-             expr_refs_outer_scope(ce->right().get(), inner, outer_tables);
+      return expr_refs_outer_scope(ce->left().get(), inner, outer_tables, outer_column_aliases) ||
+             expr_refs_outer_scope(ce->right().get(), inner, outer_tables, outer_column_aliases);
     }
     case ExprType::CONJUNCTION: {
       auto *cj = static_cast<ConjunctionExpr *>(expr);
       for (auto &c : cj->children()) {
-        if (expr_refs_outer_scope(c.get(), inner, outer_tables)) {
+        if (expr_refs_outer_scope(c.get(), inner, outer_tables, outer_column_aliases)) {
           return true;
         }
       }
@@ -73,12 +101,12 @@ static bool expr_refs_outer_scope(Expression *expr, const std::set<std::string> 
     }
     case ExprType::CAST: {
       auto *ct = static_cast<CastExpr *>(expr);
-      return expr_refs_outer_scope(ct->child().get(), inner, outer_tables);
+      return expr_refs_outer_scope(ct->child().get(), inner, outer_tables, outer_column_aliases);
     }
     case ExprType::FUNCTION: {
       auto *fn = static_cast<FunctionExpr *>(expr);
       for (auto &a : fn->args()) {
-        if (expr_refs_outer_scope(a.get(), inner, outer_tables)) {
+        if (expr_refs_outer_scope(a.get(), inner, outer_tables, outer_column_aliases)) {
           return true;
         }
       }
@@ -91,16 +119,18 @@ static bool expr_refs_outer_scope(Expression *expr, const std::set<std::string> 
 
 // Detect correlation without building Stmt (SelectStmt::create mutates SelectSqlNode).
 static bool select_node_has_correlation(const SelectSqlNode &sel,
-    const std::unordered_map<std::string, Table *> *outer_tables)
+    const std::unordered_map<std::string, Table *> *outer_tables,
+    const ColumnAliasMap *outer_column_aliases = nullptr)
 {
-  if (outer_tables == nullptr || outer_tables->empty()) {
+  if ((outer_tables == nullptr || outer_tables->empty()) &&
+      (outer_column_aliases == nullptr || outer_column_aliases->empty())) {
     return false;
   }
   std::set<std::string> inner;
   collect_inner_table_names(sel, inner);
   for (const ConditionSqlNode &cond : sel.conditions) {
-    if (expr_refs_outer_scope(cond.left_expr, inner, outer_tables) ||
-        expr_refs_outer_scope(cond.right_expr, inner, outer_tables)) {
+    if (expr_refs_outer_scope(cond.left_expr, inner, outer_tables, outer_column_aliases) ||
+        expr_refs_outer_scope(cond.right_expr, inner, outer_tables, outer_column_aliases)) {
       return true;
     }
   }
@@ -231,7 +261,9 @@ FilterStmt::~FilterStmt()
 
 RC FilterStmt::create(Db *db, Table *default_table, std::unordered_map<std::string, Table *> *tables,
     const ConditionSqlNode *conditions, int condition_num, FilterStmt *&stmt,
-    std::unordered_map<std::string, Table *> *outer_table_map)
+    std::unordered_map<std::string, Table *> *outer_table_map,
+    ColumnAliasMap *outer_column_aliases,
+    ColumnAliasMap *current_column_aliases)
 {
   RC rc = RC::SUCCESS;
   stmt = nullptr;
@@ -239,7 +271,8 @@ RC FilterStmt::create(Db *db, Table *default_table, std::unordered_map<std::stri
   FilterStmt *tmp_stmt = new FilterStmt();
   for (int i = 0; i < condition_num; i++) {
     FilterUnit *filter_unit = nullptr;
-    rc = create_filter_unit(db, default_table, tables, conditions[i], filter_unit, outer_table_map);
+    rc = create_filter_unit(db, default_table, tables, conditions[i], filter_unit, outer_table_map,
+        outer_column_aliases, current_column_aliases);
     if (rc != RC::SUCCESS) {
       delete tmp_stmt;
       LOG_WARN("failed to create filter unit. condition index=%d", i);
@@ -291,12 +324,13 @@ RC get_table_and_field(Db *db, Table *default_table, std::unordered_map<std::str
 static RC resolve_side(Expression *&expr, Table *default_table,
                        std::unordered_map<std::string, Table *> *tables,
                        FilterObj &obj, bool &is_simple,
-                       std::unordered_map<std::string, Table *> *outer_table_map = nullptr)
+                       std::unordered_map<std::string, Table *> *outer_table_map = nullptr,
+                       ColumnAliasMap *outer_column_aliases = nullptr)
 {
   if (expr == nullptr) return RC::SUCCESS;
   std::unique_ptr<Expression> e(expr);
   expr = nullptr; // 转移所有权
-  RC rc = resolve_expression(e, default_table, tables, outer_table_map);
+  RC rc = resolve_expression(e, default_table, tables, outer_table_map, outer_column_aliases);
   if (rc != RC::SUCCESS) return rc;
   if (e->type() == ExprType::FIELD) {
     obj.init_attr(static_cast<FieldExpr *>(e.get())->field());
@@ -362,7 +396,9 @@ private:
 
 RC FilterStmt::create_filter_unit(Db *db, Table *default_table, std::unordered_map<std::string, Table *> *tables,
     const ConditionSqlNode &condition, FilterUnit *&filter_unit,
-    std::unordered_map<std::string, Table *> *outer_table_map)
+    std::unordered_map<std::string, Table *> *outer_table_map,
+    ColumnAliasMap *outer_column_aliases,
+    ColumnAliasMap *current_column_aliases)
 {
   RC rc = RC::SUCCESS;
 
@@ -409,13 +445,16 @@ if (comp < EQUAL_TO || comp >= NO_OP) {
     // 转移并解析 left
     Expression *left_e = condition.left_expr;
     if (left_e) const_cast<ConditionSqlNode &>(condition).left_expr = nullptr;
-    rc = resolve_side(left_e, default_table, tables, left_obj, left_simple, outer_table_map);
+    ColumnAliasMap merged_col_aliases = merge_column_alias_maps(outer_column_aliases, current_column_aliases);
+    ColumnAliasMap *resolve_col_aliases = merged_col_aliases.empty() ? nullptr : &merged_col_aliases;
+
+    rc = resolve_side(left_e, default_table, tables, left_obj, left_simple, outer_table_map, resolve_col_aliases);
     if (rc != RC::SUCCESS) return rc;
 
     // 转移并解析 right
     Expression *right_e = condition.right_expr;
     if (right_e) const_cast<ConditionSqlNode &>(condition).right_expr = nullptr;
-    rc = resolve_side(right_e, default_table, tables, right_obj, right_simple, outer_table_map);
+    rc = resolve_side(right_e, default_table, tables, right_obj, right_simple, outer_table_map, resolve_col_aliases);
     if (rc != RC::SUCCESS) { delete left_e; return rc; }
 
     // Check for subquery in right side
@@ -529,13 +568,20 @@ if (comp < EQUAL_TO || comp >= NO_OP) {
       }
       const std::unordered_map<std::string, Table *> *detect_outer =
           merged_outer.empty() ? nullptr : &merged_outer;
-      bool is_correlated = select_node_has_correlation(*sq->select_node(), detect_outer);
+      ColumnAliasMap detect_col_aliases = merge_column_alias_maps(outer_column_aliases, current_column_aliases);
+      ColumnAliasMap *detect_col_ptr = detect_col_aliases.empty() ? nullptr : &detect_col_aliases;
+      bool is_correlated = select_node_has_correlation(*sq->select_node(), detect_outer, detect_col_ptr);
 
       Stmt *inner_stmt = nullptr;
       if (!is_correlated) {
-        rc = SelectStmt::create(db, *sq->select_node(), inner_stmt, tables);
+        rc = SelectStmt::create(db, *sq->select_node(), inner_stmt, tables, detect_col_ptr);
         if (rc == RC::SCHEMA_TABLE_NOT_EXIST && outer_table_map != nullptr) {
-          rc = SelectStmt::create(db, *sq->select_node(), inner_stmt, outer_table_map);
+          rc = SelectStmt::create(db, *sq->select_node(), inner_stmt, outer_table_map, detect_col_ptr);
+        }
+        if (rc != RC::SUCCESS) {
+          is_correlated = true;
+          inner_stmt = nullptr;
+          rc = RC::SUCCESS;
         }
       }
 
@@ -558,6 +604,14 @@ if (comp < EQUAL_TO || comp >= NO_OP) {
           }
         }
 
+        std::shared_ptr<ColumnAliasMap> captured_col_aliases = std::make_shared<ColumnAliasMap>();
+        if (outer_column_aliases != nullptr) {
+          captured_col_aliases->insert(outer_column_aliases->begin(), outer_column_aliases->end());
+        }
+        if (current_column_aliases != nullptr) {
+          captured_col_aliases->insert(current_column_aliases->begin(), current_column_aliases->end());
+        }
+
         // Capture the other side expression for IN/NOT IN comparison
         std::shared_ptr<Expression> captured_other;
         if (other_expr != nullptr) {
@@ -573,7 +627,7 @@ if (comp < EQUAL_TO || comp >= NO_OP) {
 
         auto eval_func =
             [db, select_template, sq_holder = subquery_holder, outer_map = captured_outer_map,
-             comp, is_in_op, is_exists_op, right_is_subquery, other_obj,
+             col_aliases = captured_col_aliases, comp, is_in_op, is_exists_op, right_is_subquery, other_obj,
              other_expr_ptr = captured_other](
                 const Tuple &outer_tuple, Value &value) mutable -> RC {
           // Set the outer tuple for CorrelatedFieldExpr evaluation
@@ -581,7 +635,8 @@ if (comp < EQUAL_TO || comp >= NO_OP) {
 
           SelectSqlNode sel_copy = clone_select_sql_node(*select_template);
           Stmt *inner = nullptr;
-          RC local_rc = SelectStmt::create(db, sel_copy, inner, outer_map.get());
+          ColumnAliasMap *col_ptr = col_aliases->empty() ? nullptr : col_aliases.get();
+          RC local_rc = SelectStmt::create(db, sel_copy, inner, outer_map.get(), col_ptr);
           if (local_rc != RC::SUCCESS) {
             g_outer_tuple = nullptr;
             value.set_boolean(false);
@@ -759,6 +814,12 @@ if (comp < EQUAL_TO || comp >= NO_OP) {
         filter_unit->set_custom_expr(new LambdaExpr(std::move(eval_func)));
         delete left_e; delete right_e;
         return rc;
+      }
+
+      if (inner_stmt == nullptr) {
+        delete left_e;
+        delete right_e;
+        return RC::INTERNAL;
       }
 
       auto *sel_stmt = static_cast<SelectStmt *>(inner_stmt);
