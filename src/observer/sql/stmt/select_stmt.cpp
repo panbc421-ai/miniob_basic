@@ -379,3 +379,4 @@ RC SelectStmt::create(Db *db, const SelectSqlNode &select_sql, Stmt *&stmt,
   stmt = select_stmt;
   return RC::SUCCESS;
 }
+
