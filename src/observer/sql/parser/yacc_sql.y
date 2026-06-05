@@ -931,6 +931,13 @@ select_expr_item:
       $$->alias = $1->attribute_name;
       delete $1;
     }
+    | ID DOT '*'
+    {
+      $$ = new SelectExprNode;
+      $$->is_star = true;
+      $$->star_table = $1;
+      free($1);
+    }
     ;
 
 select_expr_list:

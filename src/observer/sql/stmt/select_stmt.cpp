@@ -237,6 +237,23 @@ RC SelectStmt::create(Db *db, const SelectSqlNode &select_sql, Stmt *&stmt,
     for (size_t i = 0; i < select_sql.expressions.size(); i++) {
       const auto &sel_expr = select_sql.expressions[i];
 
+      // 处理 rel.* 星号展开
+      if (sel_expr.is_star) {
+        if (sel_expr.star_table.empty()) {
+          for (Table *table : tables) {
+            wildcard_fields(table, query_fields);
+          }
+        } else {
+          auto iter = table_map.find(sel_expr.star_table);
+          if (iter == table_map.end()) {
+            LOG_WARN("no such table for star expansion: %s", sel_expr.star_table.c_str());
+            return RC::SCHEMA_TABLE_NOT_EXIST;
+          }
+          wildcard_fields(iter->second, query_fields);
+        }
+        continue;
+      }
+
       // 处理聚合
       if (sel_expr.agg_type != AGG_NONE) {
         has_aggregation = true;

@@ -211,6 +211,8 @@ static SelectSqlNode clone_select_sql_node(const SelectSqlNode &src)
     copy.agg_type = item.agg_type;
     copy.agg_field = item.agg_field;
     copy.agg_table = item.agg_table;
+    copy.is_star = item.is_star;
+    copy.star_table = item.star_table;
     if (item.expr != nullptr) {
       copy.expr = clone_parse_expression(item.expr).release();
     }

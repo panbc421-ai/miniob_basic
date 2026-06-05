@@ -148,6 +148,8 @@ struct SelectExprNode
   AggregationType agg_type = AGG_NONE;
   std::string agg_field;       // 聚合的字段名（仅 agg_type != AGG_NONE 时有效）
   std::string agg_table;       // 聚合的表名
+  bool        is_star = false; // 是否为 rel.* 形式的星号展开
+  std::string star_table;      // 星号所属表/别名（is_star=true 时有效，空表示全部表）
 };
 
 struct SelectSqlNode
