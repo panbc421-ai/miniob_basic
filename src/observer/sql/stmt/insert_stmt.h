@@ -14,6 +14,8 @@ See the Mulan PSL v2 for more details. */
 
 #pragma once
 
+#include <vector>
+
 #include "common/rc.h"
 #include "sql/stmt/stmt.h"
 
@@ -29,6 +31,7 @@ class InsertStmt : public Stmt
 public:
   InsertStmt() = default;
   InsertStmt(Table *table, const Value *values, int value_amount);
+  InsertStmt(Table *table, std::vector<Value> &&owned_values);
 
   StmtType type() const override
   {
@@ -45,15 +48,16 @@ public:
   }
   const Value *values() const
   {
-    return values_;
+    return owned_values_.empty() ? values_ : owned_values_.data();
   }
   int value_amount() const
   {
-    return value_amount_;
+    return owned_values_.empty() ? value_amount_ : static_cast<int>(owned_values_.size());
   }
 
 private:
   Table *table_ = nullptr;
   const Value *values_ = nullptr;
   int value_amount_ = 0;
+  std::vector<Value> owned_values_;
 };

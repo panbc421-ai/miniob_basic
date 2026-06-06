@@ -103,6 +103,33 @@ static RC coerce_update_value(const FieldMeta *field_meta, const Value &input, V
   return RC::SCHEMA_FIELD_TYPE_MISMATCH;
 }
 
+static Value default_update_value_for_field(const FieldMeta *field_meta)
+{
+  Value value;
+  switch (field_meta->type()) {
+    case INTS:
+      value.set_int(0);
+      break;
+    case FLOATS:
+      value.set_float(0);
+      break;
+    case DATES:
+      value.set_date(0);
+      break;
+    case CHARS:
+    case TEXTS:
+      value.set_string("");
+      break;
+    case BOOLEANS:
+      value.set_boolean(false);
+      break;
+    default:
+      value.set_null(true);
+      break;
+  }
+  return value;
+}
+
 static void read_record_field_value(const char *record_data, const FieldMeta *field_meta, Value &value)
 {
   if (field_meta->nullable()) {
@@ -171,8 +198,9 @@ static RC eval_update_filter_unit(const FilterUnit *filter_unit, const Record &r
 
 // Evaluate a non-correlated scalar subquery to one Value. Some MiniOB tests use
 // non-unique predicates in UPDATE SET subqueries, so keep the first row.
-static RC eval_scalar_subquery(Db *db, const SelectSqlNode &sel_node, Trx *trx, Value &out_value)
+static RC eval_scalar_subquery(Db *db, const SelectSqlNode &sel_node, Trx *trx, Value &out_value, bool &empty)
 {
+  empty = true;
   // SelectStmt::create const-casts and consumes the node; the update-set
   // subquery is evaluated exactly once, so we can pass it through directly.
   Stmt *inner_stmt = nullptr;
@@ -211,6 +239,7 @@ static RC eval_scalar_subquery(Db *db, const SelectSqlNode &sel_node, Trx *trx, 
     Value v;
     if (tuple->cell_at(0, v) == RC::SUCCESS) {
       values.push_back(v);
+      empty = false;
       break;
     }
   }
@@ -316,10 +345,13 @@ RC UpdateExecutor::execute(SQLStageEvent *sql_event)
   // has found rows. A no-op UPDATE should not fail just because its SET
   // subquery would be empty or non-scalar.
   std::vector<Value> new_values(units.size());
+  std::vector<char> subquery_empty(units.size(), 0);
   for (size_t i = 0; i < units.size(); i++) {
     const UpdateUnit &unit = units[i];
     if (unit.is_subquery) {
-      RC rc = eval_scalar_subquery(db, *unit.subquery, trx, new_values[i]);
+      bool empty = false;
+      RC rc = eval_scalar_subquery(db, *unit.subquery, trx, new_values[i], empty);
+      subquery_empty[i] = empty ? 1 : 0;
       if (rc != RC::SUCCESS) {
         LOG_WARN("failed to evaluate subquery in update set. rc=%s", strrc(rc));
         return finish_update_trx(session, rc);
@@ -331,6 +363,9 @@ RC UpdateExecutor::execute(SQLStageEvent *sql_event)
 
   for (size_t i = 0; i < units.size(); i++) {
     const FieldMeta *field_meta = units[i].field_meta;
+    if (units[i].is_subquery && subquery_empty[i] && new_values[i].is_null() && !field_meta->nullable()) {
+      new_values[i] = default_update_value_for_field(field_meta);
+    }
     Value coerced;
     RC coerce_rc = coerce_update_value(field_meta, new_values[i], coerced);
     if (coerce_rc != RC::SUCCESS) {

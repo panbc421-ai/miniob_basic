@@ -47,9 +47,12 @@ public:
 
   RC create_table(const char *table_name, int attribute_count, const AttrInfoSqlNode *attributes);
   RC create_view_alias(const char *view_name, const char *base_table_name);
+  RC create_view_alias(const char *view_name, const char *base_table_name, const std::vector<std::string> &columns);
   RC drop_table(const char *table_name);
   Table *find_table(const char *table_name) const;
   Table *find_table(int32_t table_id) const;
+  const std::vector<std::string> *view_columns(const char *view_name) const;
+  const char *view_base_table(const char *view_name) const;
 
   const char *name() const;
 
@@ -69,6 +72,7 @@ private:
   std::string path_;
   std::unordered_map<std::string, Table *> opened_tables_;
   std::unordered_map<std::string, std::string> view_aliases_;
+  std::unordered_map<std::string, std::vector<std::string>> view_columns_;
   std::unique_ptr<CLogManager> clog_manager_;
 
   /// 给每个table都分配一个ID，用来记录日志。这里假设所有的DDL都不会并发操作，所以相关的数据都不上锁

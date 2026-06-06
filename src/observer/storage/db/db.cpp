@@ -102,6 +102,11 @@ RC Db::create_table(const char *table_name, int attribute_count, const AttrInfoS
 }
 RC Db::create_view_alias(const char *view_name, const char *base_table_name)
 {
+  return create_view_alias(view_name, base_table_name, std::vector<std::string>());
+}
+
+RC Db::create_view_alias(const char *view_name, const char *base_table_name, const std::vector<std::string> &columns)
+{
   if (common::is_blank(view_name) || common::is_blank(base_table_name)) {
     return RC::INVALID_ARGUMENT;
   }
@@ -117,6 +122,7 @@ RC Db::create_view_alias(const char *view_name, const char *base_table_name)
   }
 
   view_aliases_[view_name] = base_table->name();
+  view_columns_[view_name] = columns;
   LOG_INFO("Create view alias success. view name=%s, base table=%s", view_name, base_table->name());
   return RC::SUCCESS;
 }
@@ -126,6 +132,7 @@ RC Db::drop_table(const char *table_name)
   auto view_iter = view_aliases_.find(table_name);
   if (view_iter != view_aliases_.end()) {
     view_aliases_.erase(view_iter);
+    view_columns_.erase(table_name);
     LOG_INFO("Drop view alias success. view name=%s", table_name);
     return RC::SUCCESS;
   }
@@ -154,6 +161,7 @@ RC Db::drop_table(const char *table_name)
   delete table;
   for (auto alias_iter = view_aliases_.begin(); alias_iter != view_aliases_.end();) {
     if (alias_iter->second == table_name) {
+      view_columns_.erase(alias_iter->first);
       alias_iter = view_aliases_.erase(alias_iter);
     } else {
       ++alias_iter;
@@ -177,6 +185,24 @@ Table *Db::find_table(const char *table_name) const
     }
   }
   return nullptr;
+}
+
+const std::vector<std::string> *Db::view_columns(const char *view_name) const
+{
+  auto iter = view_columns_.find(view_name);
+  if (iter == view_columns_.end()) {
+    return nullptr;
+  }
+  return &iter->second;
+}
+
+const char *Db::view_base_table(const char *view_name) const
+{
+  auto iter = view_aliases_.find(view_name);
+  if (iter == view_aliases_.end()) {
+    return nullptr;
+  }
+  return iter->second.c_str();
 }
 
 Table *Db::find_table(int32_t table_id) const

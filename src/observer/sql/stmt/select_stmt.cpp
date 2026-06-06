@@ -7,6 +7,7 @@
 #include "storage/table/table.h"
 #include "sql/expr/expression.h"
 
+#include <algorithm>
 #include <unordered_set>
 
 // Walk expression tree and collect AggregationExpr nodes, replacing them
@@ -102,12 +103,18 @@ SelectStmt::~SelectStmt()
   }
 }
 
-static void wildcard_fields(Table *table, std::vector<Field> &field_metas)
+static void wildcard_fields(Table *table, std::vector<Field> &field_metas,
+    const std::vector<std::string> *visible_columns = nullptr)
 {
   const TableMeta &table_meta = table->table_meta();
   const int field_num = table_meta.field_num();
   for (int i = table_meta.sys_field_num(); i < field_num; i++) {
-    field_metas.push_back(Field(table, table_meta.field(i)));
+    const FieldMeta *field_meta = table_meta.field(i);
+    if (visible_columns != nullptr && !visible_columns->empty() &&
+        std::find(visible_columns->begin(), visible_columns->end(), field_meta->name()) == visible_columns->end()) {
+      continue;
+    }
+    field_metas.push_back(Field(table, field_meta));
   }
 }
 
@@ -164,6 +171,26 @@ RC SelectStmt::create(Db *db, const SelectSqlNode &select_sql, Stmt *&stmt,
   if (tables.size() == 1) {
     default_table = tables[0];
   }
+
+  auto view_visible_columns = [&](const Table *table) -> const std::vector<std::string> * {
+    for (const std::string &relation_name : select_sql.relations) {
+      if (db->find_table(relation_name.c_str()) == table) {
+        const std::vector<std::string> *columns = db->view_columns(relation_name.c_str());
+        if (columns != nullptr) {
+          return columns;
+        }
+      }
+    }
+    return nullptr;
+  };
+  auto field_visible_in_view = [&](const std::string &field_name, const Table *table = nullptr) -> bool {
+    const std::vector<std::string> *columns =
+        table == nullptr ? view_visible_columns(default_table) : view_visible_columns(table);
+    if (columns == nullptr || columns->empty()) {
+      return true;
+    }
+    return std::find(columns->begin(), columns->end(), field_name) != columns->end();
+  };
 
   ColumnAliasMap column_aliases = build_column_alias_map(select_sql, table_map, default_table);
 
@@ -223,23 +250,24 @@ RC SelectStmt::create(Db *db, const SelectSqlNode &select_sql, Stmt *&stmt,
     if (common::is_blank(relation_attr.relation_name.c_str()) &&
         0 == strcmp(relation_attr.attribute_name.c_str(), "*")) {
       for (Table *table : tables) {
-        wildcard_fields(table, query_fields);
+        wildcard_fields(table, query_fields, view_visible_columns(table));
       }
     } else if (!common::is_blank(relation_attr.relation_name.c_str())) {
       const char *table_name = relation_attr.relation_name.c_str();
       const char *field_name = relation_attr.attribute_name.c_str();
       if (0 == strcmp(table_name, "*")) {
         if (0 != strcmp(field_name, "*")) return RC::SCHEMA_FIELD_MISSING;
-        for (Table *table : tables) wildcard_fields(table, query_fields);
+        for (Table *table : tables) wildcard_fields(table, query_fields, view_visible_columns(table));
       } else {
         auto iter = table_map.find(table_name);
         if (iter == table_map.end()) return RC::SCHEMA_FIELD_MISSING;
         Table *table = iter->second;
         if (0 == strcmp(field_name, "*")) {
-          wildcard_fields(table, query_fields);
+          wildcard_fields(table, query_fields, db->view_columns(table_name));
         } else {
           const FieldMeta *field_meta = table->table_meta().field(field_name);
           if (nullptr == field_meta) return RC::SCHEMA_FIELD_MISSING;
+          if (!field_visible_in_view(field_name, table)) return RC::SCHEMA_FIELD_MISSING;
           query_fields.push_back(Field(table, field_meta));
         }
       }
@@ -254,6 +282,7 @@ RC SelectStmt::create(Db *db, const SelectSqlNode &select_sql, Stmt *&stmt,
         LOG_WARN("no such field. field=%s.%s.%s", db->name(), table->name(), relation_attr.attribute_name.c_str());
         return RC::SCHEMA_FIELD_MISSING;
       }
+      if (!field_visible_in_view(relation_attr.attribute_name, table)) return RC::SCHEMA_FIELD_MISSING;
       query_fields.push_back(Field(table, field_meta));
     }
   }
@@ -294,7 +323,7 @@ RC SelectStmt::create(Db *db, const SelectSqlNode &select_sql, Stmt *&stmt,
           for (Table *table : tables) {
             if (ordered_projection) {
               std::vector<Field> expanded_fields;
-              wildcard_fields(table, expanded_fields);
+              wildcard_fields(table, expanded_fields, view_visible_columns(table));
               for (const Field &field : expanded_fields) {
                 std::string alias = tables.size() > 1
                     ? std::string(field.table_name()) + "." + field.field_name()
@@ -302,7 +331,7 @@ RC SelectStmt::create(Db *db, const SelectSqlNode &select_sql, Stmt *&stmt,
                 append_ordered_field(field, alias);
               }
             } else {
-              wildcard_fields(table, query_fields);
+              wildcard_fields(table, query_fields, view_visible_columns(table));
             }
           }
         } else {
@@ -313,7 +342,7 @@ RC SelectStmt::create(Db *db, const SelectSqlNode &select_sql, Stmt *&stmt,
           }
           if (ordered_projection) {
             std::vector<Field> expanded_fields;
-            wildcard_fields(iter->second, expanded_fields);
+            wildcard_fields(iter->second, expanded_fields, db->view_columns(sel_expr.star_table.c_str()));
             for (const Field &field : expanded_fields) {
               std::string alias = tables.size() > 1
                   ? std::string(field.table_name()) + "." + field.field_name()
@@ -321,7 +350,7 @@ RC SelectStmt::create(Db *db, const SelectSqlNode &select_sql, Stmt *&stmt,
               append_ordered_field(field, alias);
             }
           } else {
-            wildcard_fields(iter->second, query_fields);
+            wildcard_fields(iter->second, query_fields, db->view_columns(sel_expr.star_table.c_str()));
           }
         }
         continue;
@@ -347,6 +376,7 @@ RC SelectStmt::create(Db *db, const SelectSqlNode &select_sql, Stmt *&stmt,
           }
           const FieldMeta *field_meta = table->table_meta().field(sel_expr.agg_field.c_str());
           if (field_meta == nullptr) return RC::SCHEMA_FIELD_MISSING;
+          if (!field_visible_in_view(sel_expr.agg_field, table)) return RC::SCHEMA_FIELD_MISSING;
           agg.field_meta = field_meta;
           agg.table = table;
           if (!sel_expr.alias.empty()) {
@@ -388,6 +418,9 @@ RC SelectStmt::create(Db *db, const SelectSqlNode &select_sql, Stmt *&stmt,
       bool implicit_alias = alias.empty();
       if (e->type() == ExprType::FIELD) {
         auto *fe = static_cast<FieldExpr *>(e.get());
+        if (!field_visible_in_view(fe->field().field_name(), fe->field().table())) {
+          return RC::SCHEMA_FIELD_MISSING;
+        }
         if (alias == fe->field().field_name()) {
           implicit_alias = true;
         }

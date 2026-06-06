@@ -17,8 +17,39 @@ See the Mulan PSL v2 for more details. */
 #include "storage/db/db.h"
 #include "storage/table/table.h"
 
+static Value default_value_for_field(const FieldMeta *field_meta)
+{
+  Value value;
+  switch (field_meta->type()) {
+    case INTS:
+      value.set_int(0);
+      break;
+    case FLOATS:
+      value.set_float(0);
+      break;
+    case DATES:
+      value.set_date(0);
+      break;
+    case CHARS:
+    case TEXTS:
+      value.set_string("");
+      break;
+    case BOOLEANS:
+      value.set_boolean(false);
+      break;
+    default:
+      value.set_null(true);
+      break;
+  }
+  return value;
+}
+
 InsertStmt::InsertStmt(Table *table, const Value *values, int value_amount)
     : table_(table), values_(values), value_amount_(value_amount)
+{}
+
+InsertStmt::InsertStmt(Table *table, std::vector<Value> &&owned_values)
+    : table_(table), owned_values_(std::move(owned_values))
 {}
 
 RC InsertStmt::create(Db *db, const InsertSqlNode &inserts, Stmt *&stmt)
@@ -42,6 +73,72 @@ RC InsertStmt::create(Db *db, const InsertSqlNode &inserts, Stmt *&stmt)
   const int value_num = static_cast<int>(inserts.values.size());
   const TableMeta &table_meta = table->table_meta();
   const int field_num = table_meta.field_num() - table_meta.sys_field_num();
+
+  const std::vector<std::string> *view_columns = db->view_columns(table_name);
+  if (view_columns != nullptr && !view_columns->empty()) {
+    const int view_field_num = static_cast<int>(view_columns->size());
+    if (value_num % view_field_num != 0) {
+      LOG_WARN("schema mismatch. value num=%d, view field num=%d", value_num, view_field_num);
+      return RC::SCHEMA_FIELD_MISSING;
+    }
+
+    std::vector<int> view_to_base(view_field_num, -1);
+    for (int i = 0; i < view_field_num; i++) {
+      const FieldMeta *field_meta = table_meta.field((*view_columns)[i].c_str());
+      if (field_meta == nullptr) {
+        LOG_WARN("view field does not exist in base table. field=%s", (*view_columns)[i].c_str());
+        return RC::SCHEMA_FIELD_MISSING;
+      }
+      for (int f = table_meta.sys_field_num(); f < table_meta.field_num(); f++) {
+        if (table_meta.field(f) == field_meta) {
+          view_to_base[i] = f - table_meta.sys_field_num();
+          break;
+        }
+      }
+    }
+
+    const int tuple_count = value_num / view_field_num;
+    std::vector<Value> mapped_values(tuple_count * field_num);
+    for (int t = 0; t < tuple_count; t++) {
+      for (int f = 0; f < field_num; f++) {
+        const FieldMeta *field_meta = table_meta.field(f + table_meta.sys_field_num());
+        mapped_values[t * field_num + f] = field_meta->nullable()
+            ? Value()
+            : default_value_for_field(field_meta);
+        if (field_meta->nullable()) {
+          mapped_values[t * field_num + f].set_null(true);
+        }
+      }
+    }
+    for (int t = 0; t < tuple_count; t++) {
+      for (int i = 0; i < view_field_num; i++) {
+        mapped_values[t * field_num + view_to_base[i]] = values[t * view_field_num + i];
+      }
+    }
+
+    values = mapped_values.data();
+    const int mapped_value_num = static_cast<int>(mapped_values.size());
+    for (int i = 0; i < mapped_value_num; i++) {
+      const FieldMeta *field_meta = table_meta.field((i % field_num) + table_meta.sys_field_num());
+      const AttrType field_type = field_meta->type();
+      const AttrType value_type = values[i].attr_type();
+      if (value_type == NULLS) {
+        continue;
+      }
+      bool type_compatible = (field_type == value_type) ||
+          (field_type == TEXTS && value_type == CHARS) ||
+          (field_type == CHARS && value_type == TEXTS);
+      if (!type_compatible) {
+        LOG_WARN("field type mismatch. table=%s, field=%s, field type=%d, value_type=%d",
+            table_name, field_meta->name(), field_type, value_type);
+        return RC::SCHEMA_FIELD_TYPE_MISMATCH;
+      }
+    }
+
+    stmt = new InsertStmt(table, std::move(mapped_values));
+    return RC::SUCCESS;
+  }
+
   if (value_num % field_num != 0) {
     LOG_WARN("schema mismatch. value num=%d, field num in schema=%d", value_num, field_num);
     return RC::SCHEMA_FIELD_MISSING;

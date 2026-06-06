@@ -376,11 +376,6 @@ RC Table::make_record(int value_num, const Value *values, Record &record)
       // Skip type check for NULL values on nullable columns
       continue;
     }
-    if (field->type() == TEXTS && value.get_string().size() + 1 > static_cast<size_t>(field->len())) {
-      LOG_ERROR("Text value is too long. table name=%s, field name=%s, len=%d, given=%d",
-                table_meta_.name(), field->name(), field->len(), static_cast<int>(value.get_string().size()));
-      return RC::SCHEMA_FIELD_TYPE_MISMATCH;
-    }
     // Allow CHARS/TEXTS interchangeability (both are string types)
     bool type_compatible = (field->type() == value.attr_type()) ||
         (field->type() == TEXTS && value.attr_type() == CHARS) ||
