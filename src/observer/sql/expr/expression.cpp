@@ -743,6 +743,13 @@ static RC eval_function(const std::string &func_name, const std::vector<Value> &
       snprintf(buf, sizeof(buf), "%02d", d);
       fmt.replace(pos, 2, buf);
     }
+    for (size_t i = 0; i < fmt.size();) {
+      if (fmt[i] == '%') {
+        fmt.erase(i, 1);
+      } else {
+        i++;
+      }
+    }
     value.set_string(fmt.c_str());
     return RC::SUCCESS;
   }

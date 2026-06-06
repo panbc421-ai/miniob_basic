@@ -1891,7 +1891,7 @@ RC BplusTreeScanner::fix_user_key(
   if (key_len <= attr_length) {
     memcpy(key_buf, user_key, key_len);
     if (key_len < attr_length) {
-      memset(key_buf + key_len, 0, attr_length - key_len);
+      memset(key_buf + key_len, want_greater ? 0 : 0xff, attr_length - key_len);
     }
     *fixed_key = key_buf;
     return RC::SUCCESS;

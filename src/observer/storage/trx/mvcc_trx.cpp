@@ -176,7 +176,19 @@ RC MvccTrx::delete_record(Table * table, Record &record)
   }
   
   end_field.set_int(record, -trx_id_);
-  RC rc = log_manager_->append_log(CLogType::DELETE, trx_id_, table->table_id(), record.rid(), 0, 0, nullptr);
+  auto record_updater = [this, &end_field](Record &stored_record) {
+    ASSERT(end_field.get_int(stored_record) == trx_kit_.max_trx_id(),
+           "got an invalid record while deleting. end xid=%d, this trx id=%d",
+           end_field.get_int(stored_record), trx_id_);
+    end_field.set_int(stored_record, -trx_id_);
+  };
+  RC rc = table->visit_record(record.rid(), false/*readonly*/, record_updater);
+  if (rc != RC::SUCCESS) {
+    LOG_WARN("failed to mark record deleted. rid=%s, rc=%s", record.rid().to_string().c_str(), strrc(rc));
+    return rc;
+  }
+
+  rc = log_manager_->append_log(CLogType::DELETE, trx_id_, table->table_id(), record.rid(), 0, 0, nullptr);
   ASSERT(rc == RC::SUCCESS, "failed to append delete record log. trx id=%d, table id=%d, rid=%s, record len=%d, rc=%s",
       trx_id_, table->table_id(), record.rid().to_string().c_str(), record.len(), strrc(rc));
 

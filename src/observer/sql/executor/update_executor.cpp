@@ -12,7 +12,161 @@
 #include "storage/db/db.h"
 #include "common/log/log.h"
 #include "session/session.h"
+#include "sql/expr/tuple.h"
+#include <stdexcept>
+#include <string>
 #include <vector>
+
+static bool parse_int_value(const Value &input, int &output)
+{
+  if (input.attr_type() == INTS || input.attr_type() == FLOATS) {
+    output = input.get_int();
+    return true;
+  }
+  if (input.attr_type() == CHARS || input.attr_type() == TEXTS) {
+    try {
+      size_t pos = 0;
+      std::string text = input.get_string();
+      output = std::stoi(text, &pos);
+      return pos == text.size();
+    } catch (const std::exception &) {
+      return false;
+    }
+  }
+  return false;
+}
+
+static bool parse_float_value(const Value &input, float &output)
+{
+  if (input.attr_type() == FLOATS || input.attr_type() == INTS) {
+    output = input.get_float();
+    return true;
+  }
+  if (input.attr_type() == CHARS || input.attr_type() == TEXTS) {
+    try {
+      size_t pos = 0;
+      std::string text = input.get_string();
+      output = std::stof(text, &pos);
+      return pos == text.size();
+    } catch (const std::exception &) {
+      return false;
+    }
+  }
+  return false;
+}
+
+static RC coerce_update_value(const FieldMeta *field_meta, const Value &input, Value &output)
+{
+  if (input.is_null()) {
+    if (!field_meta->nullable()) {
+      LOG_WARN("field %s is not nullable", field_meta->name());
+      return RC::SCHEMA_FIELD_TYPE_MISMATCH;
+    }
+    output.set_null(true);
+    return RC::SUCCESS;
+  }
+
+  switch (field_meta->type()) {
+    case INTS: {
+      int int_value = 0;
+      if (!parse_int_value(input, int_value)) {
+        return RC::SCHEMA_FIELD_TYPE_MISMATCH;
+      }
+      output.set_int(int_value);
+      return RC::SUCCESS;
+    }
+    case FLOATS: {
+      float float_value = 0;
+      if (!parse_float_value(input, float_value)) {
+        return RC::SCHEMA_FIELD_TYPE_MISMATCH;
+      }
+      output.set_float(float_value);
+      return RC::SUCCESS;
+    }
+    case CHARS:
+    case TEXTS: {
+      std::string text = input.to_string();
+      output.set_string(text.c_str());
+      return RC::SUCCESS;
+    }
+    case DATES:
+      if (input.attr_type() == DATES) {
+        output.set_date(input.get_date());
+        return RC::SUCCESS;
+      }
+      return RC::SCHEMA_FIELD_TYPE_MISMATCH;
+    default:
+      break;
+  }
+
+  return RC::SCHEMA_FIELD_TYPE_MISMATCH;
+}
+
+static void read_record_field_value(const char *record_data, const FieldMeta *field_meta, Value &value)
+{
+  if (field_meta->nullable()) {
+    const char *field_data = record_data + field_meta->offset();
+    bool is_null = true;
+    for (int i = 0; i < field_meta->len(); i++) {
+      if (field_data[i] != 0) {
+        is_null = false;
+        break;
+      }
+    }
+    if (is_null) {
+      value.set_null(true);
+      return;
+    }
+  }
+  value.set_type(field_meta->type());
+  value.set_data(record_data + field_meta->offset(), field_meta->len());
+}
+
+static RC eval_update_filter_unit(const FilterUnit *filter_unit, const Record &record,
+    const Table *table, bool &match)
+{
+  RowTuple tuple;
+  tuple.set_schema(table, table->table_meta().field_metas());
+  tuple.set_record(const_cast<Record *>(&record));
+
+  if (filter_unit->has_custom_expr()) {
+    Value value;
+    RC rc = filter_unit->custom_expr()->get_value(tuple, value);
+    if (rc != RC::SUCCESS) {
+      return rc;
+    }
+    match = value.get_boolean();
+    return RC::SUCCESS;
+  }
+
+  Value left_value;
+  Value right_value;
+  RC rc = RC::SUCCESS;
+  if (filter_unit->is_expr_based()) {
+    rc = filter_unit->left_expr()->get_value(tuple, left_value);
+    if (rc != RC::SUCCESS) {
+      return rc;
+    }
+    rc = filter_unit->right_expr()->get_value(tuple, right_value);
+    if (rc != RC::SUCCESS) {
+      return rc;
+    }
+  } else {
+    if (filter_unit->left().is_attr) {
+      read_record_field_value(record.data(), filter_unit->left().field.meta(), left_value);
+    } else {
+      left_value = filter_unit->left().value;
+    }
+    if (filter_unit->right().is_attr) {
+      read_record_field_value(record.data(), filter_unit->right().field.meta(), right_value);
+    } else {
+      right_value = filter_unit->right().value;
+    }
+  }
+
+  ComparisonExpr cmp(filter_unit->comp(), std::unique_ptr<Expression>(), std::unique_ptr<Expression>());
+  return cmp.compare_value(left_value, right_value, match);
+}
 
 // Evaluate a non-correlated scalar subquery to a single Value.
 // Returns RC::INVALID_ARGUMENT if the subquery yields more than one row/column.
@@ -100,22 +254,14 @@ RC UpdateExecutor::execute(SQLStageEvent *sql_event)
   // 2. Type-check each assignment against its target field.
   for (size_t i = 0; i < units.size(); i++) {
     const FieldMeta *field_meta = units[i].field_meta;
-    const Value &v = new_values[i];
-    if (v.is_null()) {
-      if (!field_meta->nullable()) {
-        LOG_WARN("field %s is not nullable", field_meta->name());
-        return RC::SCHEMA_FIELD_TYPE_MISMATCH;
-      }
-      continue;
+    Value coerced;
+    RC coerce_rc = coerce_update_value(field_meta, new_values[i], coerced);
+    if (coerce_rc != RC::SUCCESS) {
+      LOG_WARN("failed to coerce update value. field=%s field_type=%d value_type=%d",
+               field_meta->name(), field_meta->type(), new_values[i].attr_type());
+      return coerce_rc;
     }
-    bool type_compatible = (field_meta->type() == v.attr_type()) ||
-        (field_meta->type() == TEXTS && v.attr_type() == CHARS) ||
-        (field_meta->type() == CHARS && v.attr_type() == TEXTS);
-    if (!type_compatible) {
-      LOG_WARN("field type mismatch. field=%s field_type=%d value_type=%d",
-               field_meta->name(), field_meta->type(), v.attr_type());
-      return RC::SCHEMA_FIELD_TYPE_MISMATCH;
-    }
+    new_values[i] = coerced;
   }
 
   const int sys_field_num = table->table_meta().sys_field_num();
@@ -151,31 +297,11 @@ RC UpdateExecutor::execute(SQLStageEvent *sql_event)
     if (filter_stmt != nullptr) {
       bool match = true;
       for (FilterUnit *filter_unit : filter_stmt->filter_units()) {
-        Value left_value, right_value;
-        if (filter_unit->left().is_attr) {
-          const FieldMeta *left_field = filter_unit->left().field.meta();
-          left_value.set_type(left_field->type());
-          left_value.set_data(record.data() + left_field->offset(), left_field->len());
-        } else {
-          left_value = filter_unit->left().value;
-        }
-        if (filter_unit->right().is_attr) {
-          const FieldMeta *right_field = filter_unit->right().field.meta();
-          right_value.set_type(right_field->type());
-          right_value.set_data(record.data() + right_field->offset(), right_field->len());
-        } else {
-          right_value = filter_unit->right().value;
-        }
-        int cmp = left_value.compare(right_value);
         bool cond = false;
-        switch (filter_unit->comp()) {
-          case EQUAL_TO: cond = (cmp == 0); break;
-          case LESS_THAN: cond = (cmp < 0); break;
-          case GREAT_THAN: cond = (cmp > 0); break;
-          case LESS_EQUAL: cond = (cmp <= 0); break;
-          case GREAT_EQUAL: cond = (cmp >= 0); break;
-          case NOT_EQUAL: cond = (cmp != 0); break;
-          default: cond = false; break;
+        rc = eval_update_filter_unit(filter_unit, record, table, cond);
+        if (rc != RC::SUCCESS) {
+          scanner.close_scan();
+          return rc;
         }
         if (!cond) { match = false; break; }
       }

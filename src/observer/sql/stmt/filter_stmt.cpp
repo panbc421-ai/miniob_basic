@@ -820,7 +820,7 @@ if (comp < EQUAL_TO || comp >= NO_OP) {
               other_val = other_obj.value;
             }
           }
-          int cmp = other_val.compare(scalar_val);
+          int cmp = right_is_subquery ? other_val.compare(scalar_val) : scalar_val.compare(other_val);
           bool result = false;
           switch (comp) {
             case EQUAL_TO: result = (cmp == 0); break;
