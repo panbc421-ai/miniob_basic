@@ -217,7 +217,9 @@ RC PhysicalPlanGenerator::create_plan(InsertLogicalOperator &insert_oper, unique
 {
   Table *table = insert_oper.table();
   vector<Value> &values = insert_oper.values();
-  InsertPhysicalOperator *insert_phy_oper = new InsertPhysicalOperator(table, std::move(values));
+  vector<char> &forced_null_fields = insert_oper.forced_null_fields();
+  InsertPhysicalOperator *insert_phy_oper =
+      new InsertPhysicalOperator(table, std::move(values), std::move(forced_null_fields));
   oper.reset(insert_phy_oper);
   return RC::SUCCESS;
 }

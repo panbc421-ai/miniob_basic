@@ -14,7 +14,14 @@ See the Mulan PSL v2 for more details. */
 
 #include "sql/operator/insert_logical_operator.h"
 
+#include <utility>
+
 InsertLogicalOperator::InsertLogicalOperator(Table *table, std::vector<Value> values)
-    : table_(table), values_(values)
+    : table_(table), values_(std::move(values))
+{
+}
+
+InsertLogicalOperator::InsertLogicalOperator(Table *table, std::vector<Value> values, std::vector<char> forced_null_fields)
+    : table_(table), values_(std::move(values)), forced_null_fields_(std::move(forced_null_fields))
 {
 }

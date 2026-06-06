@@ -28,6 +28,7 @@ class InsertPhysicalOperator : public PhysicalOperator
 {
 public:
   InsertPhysicalOperator(Table *table, std::vector<Value> &&values);
+  InsertPhysicalOperator(Table *table, std::vector<Value> &&values, std::vector<char> &&forced_null_fields);
 
   virtual ~InsertPhysicalOperator() = default;
 
@@ -45,4 +46,5 @@ public:
 private:
   Table *table_ = nullptr;
   std::vector<Value> values_;
+  std::vector<char> forced_null_fields_;
 };

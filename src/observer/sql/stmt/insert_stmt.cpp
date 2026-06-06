@@ -52,6 +52,10 @@ InsertStmt::InsertStmt(Table *table, std::vector<Value> &&owned_values)
     : table_(table), owned_values_(std::move(owned_values))
 {}
 
+InsertStmt::InsertStmt(Table *table, std::vector<Value> &&owned_values, std::vector<char> &&forced_null_fields)
+    : table_(table), owned_values_(std::move(owned_values)), forced_null_fields_(std::move(forced_null_fields))
+{}
+
 RC InsertStmt::create(Db *db, const InsertSqlNode &inserts, Stmt *&stmt)
 {
   const char *table_name = inserts.relation_name.c_str();
@@ -99,20 +103,18 @@ RC InsertStmt::create(Db *db, const InsertSqlNode &inserts, Stmt *&stmt)
 
     const int tuple_count = value_num / view_field_num;
     std::vector<Value> mapped_values(tuple_count * field_num);
+    std::vector<char> forced_null_fields(tuple_count * field_num, 0);
     for (int t = 0; t < tuple_count; t++) {
       for (int f = 0; f < field_num; f++) {
-        const FieldMeta *field_meta = table_meta.field(f + table_meta.sys_field_num());
-        mapped_values[t * field_num + f] = field_meta->nullable()
-            ? Value()
-            : default_value_for_field(field_meta);
-        if (field_meta->nullable()) {
-          mapped_values[t * field_num + f].set_null(true);
-        }
+        mapped_values[t * field_num + f].set_null(true);
+        forced_null_fields[t * field_num + f] = 1;
       }
     }
     for (int t = 0; t < tuple_count; t++) {
       for (int i = 0; i < view_field_num; i++) {
-        mapped_values[t * field_num + view_to_base[i]] = values[t * view_field_num + i];
+        const int base_index = view_to_base[i];
+        mapped_values[t * field_num + base_index] = values[t * view_field_num + i];
+        forced_null_fields[t * field_num + base_index] = 0;
       }
     }
 
@@ -135,7 +137,7 @@ RC InsertStmt::create(Db *db, const InsertSqlNode &inserts, Stmt *&stmt)
       }
     }
 
-    stmt = new InsertStmt(table, std::move(mapped_values));
+    stmt = new InsertStmt(table, std::move(mapped_values), std::move(forced_null_fields));
     return RC::SUCCESS;
   }
 

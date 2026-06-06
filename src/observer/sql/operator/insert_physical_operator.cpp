@@ -23,6 +23,10 @@ InsertPhysicalOperator::InsertPhysicalOperator(Table *table, vector<Value> &&val
     : table_(table), values_(std::move(values))
 {}
 
+InsertPhysicalOperator::InsertPhysicalOperator(Table *table, vector<Value> &&values, vector<char> &&forced_null_fields)
+    : table_(table), values_(std::move(values)), forced_null_fields_(std::move(forced_null_fields))
+{}
+
 RC InsertPhysicalOperator::open(Trx *trx)
 {
   const int sys_field_num = table_->table_meta().sys_field_num();
@@ -33,7 +37,9 @@ RC InsertPhysicalOperator::open(Trx *trx)
   RC rc = RC::SUCCESS;
   for (int t = 0; t < tuple_count; t++) {
     Record record;
-    rc = table_->make_record(field_num, values_.data() + t * field_num, record);
+    const char *forced_null_fields =
+        forced_null_fields_.size() == values_.size() ? forced_null_fields_.data() + t * field_num : nullptr;
+    rc = table_->make_record(field_num, values_.data() + t * field_num, record, forced_null_fields);
     if (rc != RC::SUCCESS) {
       LOG_WARN("failed to make record. rc=%s", strrc(rc));
       return rc;
@@ -43,6 +49,7 @@ RC InsertPhysicalOperator::open(Trx *trx)
       LOG_WARN("failed to insert record by transaction. rc=%s", strrc(rc));
       return rc;
     }
+    table_->mark_forced_null_fields(record.rid(), forced_null_fields, field_num);
   }
   return rc;
 }

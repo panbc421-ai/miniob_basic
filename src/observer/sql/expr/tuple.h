@@ -174,6 +174,12 @@ public:
     FieldExpr *field_expr = speces_[index];
     const FieldMeta *field_meta = field_expr->field().meta();
 
+    if (table_ != nullptr && record_ != nullptr &&
+        table_->is_forced_null_field(record_->rid(), field_meta)) {
+      cell.set_null(true);
+      return RC::SUCCESS;
+    }
+
     // Check for NULL value in nullable fields (NULL stored as all-zeros)
     if (field_meta->nullable()) {
       const char *data = this->record_->data() + field_meta->offset();

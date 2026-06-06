@@ -196,8 +196,9 @@ static RC eval_update_filter_unit(const FilterUnit *filter_unit, const Record &r
   return cmp.compare_value(left_value, right_value, match);
 }
 
-// Evaluate a non-correlated scalar subquery to one Value. Some MiniOB tests use
-// non-unique predicates in UPDATE SET subqueries, so keep the first row.
+// Evaluate a non-correlated scalar subquery to one Value. Empty results are
+// kept as NULL for the legacy nullable/default handling below, but more than
+// one row is not a scalar value.
 static RC eval_scalar_subquery(Db *db, const SelectSqlNode &sel_node, Trx *trx, Value &out_value, bool &empty)
 {
   empty = true;
@@ -240,11 +241,18 @@ static RC eval_scalar_subquery(Db *db, const SelectSqlNode &sel_node, Trx *trx, 
     if (tuple->cell_at(0, v) == RC::SUCCESS) {
       values.push_back(v);
       empty = false;
-      break;
+      if (values.size() > 1) {
+        break;
+      }
     }
   }
   phys_oper->close();
   delete sel_stmt;
+
+  if (values.size() > 1) {
+    LOG_WARN("scalar subquery returned more than one row");
+    return RC::INVALID_ARGUMENT;
+  }
 
   if (values.empty()) {
     out_value.set_null(true);  // empty subquery -> NULL
@@ -385,11 +393,14 @@ RC UpdateExecutor::execute(SQLStageEvent *sql_event)
 
     // Read current field values.
     std::vector<Value> values(normal_field_num);
+    std::vector<char> forced_null_fields(normal_field_num, 0);
     for (int f = sys_field_num; f < field_num; f++) {
       const FieldMeta *fm = table->table_meta().field(f);
       int idx = f - sys_field_num;
-      bool is_null = false;
-      if (fm->nullable()) {
+      bool is_null = table->is_forced_null_field(rid, fm);
+      if (is_null) {
+        forced_null_fields[idx] = 1;
+      } else if (fm->nullable()) {
         const char *fdata = data_copy.data() + fm->offset();
         is_null = true;
         for (int b = 0; b < fm->len(); b++) {
@@ -409,10 +420,11 @@ RC UpdateExecutor::execute(SQLStageEvent *sql_event)
       int idx = unit_value_index[i];
       if (idx < 0) continue;
       values[idx] = new_values[i];
+      forced_null_fields[idx] = 0;
     }
 
     Record new_record;
-    rc = table->make_record(normal_field_num, values.data(), new_record);
+    rc = table->make_record(normal_field_num, values.data(), new_record, forced_null_fields.data());
     if (rc != RC::SUCCESS) {
       LOG_WARN("failed to make new record for update. rc=%s", strrc(rc));
       return finish_update_trx(session, rc);
@@ -428,6 +440,7 @@ RC UpdateExecutor::execute(SQLStageEvent *sql_event)
       LOG_WARN("failed to insert updated record. rc=%s", strrc(rc));
       return finish_update_trx(session, rc);
     }
+    table->mark_forced_null_fields(new_record.rid(), forced_null_fields.data(), normal_field_num);
   }
 
   return finish_update_trx(session, RC::SUCCESS);

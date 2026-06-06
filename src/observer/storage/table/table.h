@@ -15,6 +15,9 @@ See the Mulan PSL v2 for more details. */
 #pragma once
 
 #include <functional>
+#include <string>
+#include <unordered_map>
+#include <unordered_set>
 #include <vector>
 #include "storage/table/table_meta.h"
 
@@ -70,6 +73,7 @@ public:
    * @param record    生成的记录数据
    */
   RC make_record(int value_num, const Value *values, Record &record);
+  RC make_record(int value_num, const Value *values, Record &record, const char *forced_null_fields);
 
   /**
    * @brief 在当前的表中插入一条记录
@@ -81,6 +85,9 @@ public:
   RC delete_record(const Record &record);
   RC visit_record(const RID &rid, bool readonly, std::function<void(Record &)> visitor);
   RC get_record(const RID &rid, Record &record);
+  void mark_forced_null_fields(const RID &rid, const char *forced_null_fields, int field_num);
+  void clear_forced_null_fields(const RID &rid);
+  bool is_forced_null_field(const RID &rid, const FieldMeta *field) const;
 
   RC recover_insert_record(Record &record);
 
@@ -108,6 +115,7 @@ private:
 
 private:
   RC init_record_handler(const char *base_dir);
+  std::string rid_key(const RID &rid) const;
 
 public:
   Index *find_index(const char *index_name) const;
@@ -119,4 +127,5 @@ private:
   DiskBufferPool *data_buffer_pool_ = nullptr;   /// 数据文件关联的buffer pool
   RecordFileHandler *record_handler_ = nullptr;  /// 记录操作
   std::vector<Index *> indexes_;
+  std::unordered_map<std::string, std::unordered_set<std::string>> forced_null_fields_;
 };

@@ -32,6 +32,7 @@ public:
   InsertStmt() = default;
   InsertStmt(Table *table, const Value *values, int value_amount);
   InsertStmt(Table *table, std::vector<Value> &&owned_values);
+  InsertStmt(Table *table, std::vector<Value> &&owned_values, std::vector<char> &&forced_null_fields);
 
   StmtType type() const override
   {
@@ -54,10 +55,15 @@ public:
   {
     return owned_values_.empty() ? value_amount_ : static_cast<int>(owned_values_.size());
   }
+  const std::vector<char> &forced_null_fields() const
+  {
+    return forced_null_fields_;
+  }
 
 private:
   Table *table_ = nullptr;
   const Value *values_ = nullptr;
   int value_amount_ = 0;
   std::vector<Value> owned_values_;
+  std::vector<char> forced_null_fields_;
 };

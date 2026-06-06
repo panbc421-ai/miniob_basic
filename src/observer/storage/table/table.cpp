@@ -356,6 +356,11 @@ const TableMeta &Table::table_meta() const
 
 RC Table::make_record(int value_num, const Value *values, Record &record)
 {
+  return make_record(value_num, values, record, nullptr);
+}
+
+RC Table::make_record(int value_num, const Value *values, Record &record, const char *forced_null_fields)
+{
   // 检查字段类型是否一致
   if (value_num + table_meta_.sys_field_num() != table_meta_.field_num()) {
     LOG_WARN("Input values don't match the table's schema, table name:%s", table_meta_.name());
@@ -366,9 +371,10 @@ RC Table::make_record(int value_num, const Value *values, Record &record)
   for (int i = 0; i < value_num; i++) {
     const FieldMeta *field = table_meta_.field(i + normal_field_start_index);
     const Value &value = values[i];
+    const bool forced_null = forced_null_fields != nullptr && forced_null_fields[i] != 0;
     // Handle NULL values
-    if (value.is_null()) {
-      if (!field->nullable()) {
+    if (value.is_null() || forced_null) {
+      if (!field->nullable() && !forced_null) {
         LOG_ERROR("Field %s is not nullable but got NULL value. table name=%s",
                   field->name(), table_meta_.name());
         return RC::SCHEMA_FIELD_TYPE_MISMATCH;
@@ -395,7 +401,8 @@ RC Table::make_record(int value_num, const Value *values, Record &record)
   for (int i = 0; i < value_num; i++) {
     const FieldMeta *field = table_meta_.field(i + normal_field_start_index);
     const Value &value = values[i];
-    if (value.is_null()) {
+    const bool forced_null = forced_null_fields != nullptr && forced_null_fields[i] != 0;
+    if (value.is_null() || forced_null) {
       // Leave NULL fields as zero-filled
       continue;
     }
@@ -411,6 +418,54 @@ RC Table::make_record(int value_num, const Value *values, Record &record)
 
   record.set_data_owner(record_data, record_size);
   return RC::SUCCESS;
+}
+
+std::string Table::rid_key(const RID &rid) const
+{
+  return std::to_string(rid.page_num) + ":" + std::to_string(rid.slot_num);
+}
+
+void Table::mark_forced_null_fields(const RID &rid, const char *forced_null_fields, int field_num)
+{
+  if (forced_null_fields == nullptr || field_num <= 0) {
+    clear_forced_null_fields(rid);
+    return;
+  }
+
+  const int normal_field_start_index = table_meta_.sys_field_num();
+  std::unordered_set<std::string> fields;
+  for (int i = 0; i < field_num; i++) {
+    if (forced_null_fields[i] == 0) {
+      continue;
+    }
+    const FieldMeta *field = table_meta_.field(i + normal_field_start_index);
+    if (field != nullptr) {
+      fields.insert(field->name());
+    }
+  }
+
+  if (fields.empty()) {
+    clear_forced_null_fields(rid);
+  } else {
+    forced_null_fields_[rid_key(rid)] = std::move(fields);
+  }
+}
+
+void Table::clear_forced_null_fields(const RID &rid)
+{
+  forced_null_fields_.erase(rid_key(rid));
+}
+
+bool Table::is_forced_null_field(const RID &rid, const FieldMeta *field) const
+{
+  if (field == nullptr) {
+    return false;
+  }
+  auto iter = forced_null_fields_.find(rid_key(rid));
+  if (iter == forced_null_fields_.end()) {
+    return false;
+  }
+  return iter->second.find(field->name()) != iter->second.end();
 }
 
 RC Table::init_record_handler(const char *base_dir)
@@ -573,6 +628,9 @@ RC Table::delete_record(const Record &record)
            name(), index->index_meta().name(), record.rid().to_string().c_str(), strrc(rc));
   }
   rc = record_handler_->delete_record(&record.rid());
+  if (rc == RC::SUCCESS) {
+    clear_forced_null_fields(record.rid());
+  }
   return rc;
 }
 

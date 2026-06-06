@@ -27,6 +27,7 @@ class InsertLogicalOperator : public LogicalOperator
 {
 public:
   InsertLogicalOperator(Table *table, std::vector<Value> values);
+  InsertLogicalOperator(Table *table, std::vector<Value> values, std::vector<char> forced_null_fields);
   virtual ~InsertLogicalOperator() = default;
 
   LogicalOperatorType type() const override
@@ -37,8 +38,11 @@ public:
   Table *table() const { return table_; }
   const std::vector<Value> &values() const { return values_; }
   std::vector<Value> &values() { return values_; }
+  const std::vector<char> &forced_null_fields() const { return forced_null_fields_; }
+  std::vector<char> &forced_null_fields() { return forced_null_fields_; }
 
 private:
   Table *table_ = nullptr;
   std::vector<Value> values_;
+  std::vector<char> forced_null_fields_;
 };
