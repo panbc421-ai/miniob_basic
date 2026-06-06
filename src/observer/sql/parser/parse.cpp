@@ -21,6 +21,7 @@ See the Mulan PSL v2 for more details. */
 #include "common/log/log.h"
 #include "sql/expr/expression.h"
 RC parse(char *st, ParsedSqlNode *sqln);
+int sql_parse(const char *st, ParsedSqlResult *sql_result);
 
 // Split multi-tuple INSERT like VALUES (a,b),(c,d) into individual INSERTs
 static bool split_multi_insert(const char *sql, std::vector<std::string> &out)
@@ -58,6 +59,76 @@ static bool split_multi_insert(const char *sql, std::vector<std::string> &out)
     }
   }
   return out.size() > 1;
+}
+
+static const char *skip_spaces(const char *p)
+{
+  while (*p && isspace((unsigned char)*p)) {
+    p++;
+  }
+  return p;
+}
+
+// Support CREATE TABLE t(col defs...) SELECT ... without touching the generated
+// parser tables. The table-definition part and the SELECT part are both parsed
+// by the normal parser, then merged into one CREATE_TABLE node.
+static bool parse_create_table_select(const char *sql, ParsedSqlResult *sql_result)
+{
+  const char *p = skip_spaces(sql);
+  if (strncasecmp(p, "create", 6) != 0) {
+    return false;
+  }
+  p = skip_spaces(p + 6);
+  if (strncasecmp(p, "table", 5) != 0) {
+    return false;
+  }
+
+  const char *open = strchr(p + 5, '(');
+  if (open == nullptr) {
+    return false;
+  }
+
+  int depth = 1;
+  const char *close = open + 1;
+  while (*close && depth > 0) {
+    if (*close == '(') {
+      depth++;
+    } else if (*close == ')') {
+      depth--;
+    }
+    close++;
+  }
+  if (depth != 0) {
+    return false;
+  }
+
+  const char *select = skip_spaces(close);
+  if (strncasecmp(select, "select", 6) != 0) {
+    return false;
+  }
+
+  std::string create_sql(sql, close - sql);
+  std::string select_sql(select);
+
+  ParsedSqlResult create_result;
+  ParsedSqlResult select_result;
+  sql_parse(create_sql.c_str(), &create_result);
+  sql_parse(select_sql.c_str(), &select_result);
+
+  if (create_result.sql_nodes().size() != 1 || select_result.sql_nodes().size() != 1) {
+    return false;
+  }
+
+  std::unique_ptr<ParsedSqlNode> &create_node = create_result.sql_nodes().front();
+  std::unique_ptr<ParsedSqlNode> &select_node = select_result.sql_nodes().front();
+  if (create_node->flag != SCF_CREATE_TABLE || select_node->flag != SCF_SELECT) {
+    return false;
+  }
+
+  create_node->create_table.is_ctas = true;
+  create_node->create_table.select_sql = new SelectSqlNode(std::move(select_node->selection));
+  sql_result->add_sql_node(std::move(create_node));
+  return true;
 }
 
 int sql_parse(const char *st, ParsedSqlResult *sql_result);
@@ -106,6 +177,10 @@ static void try_convert_scalar_select_to_calc(ParsedSqlResult *sql_result)
 
 RC parse(const char *st, ParsedSqlResult *sql_result)
 {
+  if (parse_create_table_select(st, sql_result)) {
+    return RC::SUCCESS;
+  }
+
   std::vector<std::string> inserts;
   if (split_multi_insert(st, inserts)) {
     // Multi-tuple INSERT: parse first tuple normally, then merge

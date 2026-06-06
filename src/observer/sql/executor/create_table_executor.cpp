@@ -34,9 +34,11 @@ RC CreateTableExecutor::execute(SQLStageEvent *sql_event)
 
   if (create_table_stmt->is_ctas()) {
     const bool auto_commit = !session->is_trx_multi_operation_mode();
+    const std::vector<AttrInfoSqlNode> *specified_attrs =
+        create_table_stmt->attr_infos().empty() ? nullptr : &create_table_stmt->attr_infos();
     return materialize_select_as_table(session->get_current_db(),
         session->current_trx(), auto_commit,
-        create_table_stmt->table_name().c_str(), create_table_stmt->select_sql());
+        create_table_stmt->table_name().c_str(), create_table_stmt->select_sql(), specified_attrs);
   }
 
   const int attribute_count = static_cast<int>(create_table_stmt->attr_infos().size());

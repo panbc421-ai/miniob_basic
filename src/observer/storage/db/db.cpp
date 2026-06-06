@@ -80,7 +80,7 @@ RC Db::create_table(const char *table_name, int attribute_count, const AttrInfoS
 {
   RC rc = RC::SUCCESS;
   // check table_name
-  if (opened_tables_.count(table_name) != 0) {
+  if (opened_tables_.count(table_name) != 0 || view_aliases_.count(table_name) != 0) {
     LOG_WARN("%s has been opened before.", table_name);
     return RC::SCHEMA_TABLE_EXIST;
   }
@@ -100,8 +100,36 @@ RC Db::create_table(const char *table_name, int attribute_count, const AttrInfoS
   LOG_INFO("Create table success. table name=%s, table_id:%d", table_name, table_id);
   return RC::SUCCESS;
 }
+RC Db::create_view_alias(const char *view_name, const char *base_table_name)
+{
+  if (common::is_blank(view_name) || common::is_blank(base_table_name)) {
+    return RC::INVALID_ARGUMENT;
+  }
+  if (opened_tables_.count(view_name) != 0 || view_aliases_.count(view_name) != 0) {
+    LOG_WARN("view/table already exists. view name=%s", view_name);
+    return RC::SCHEMA_TABLE_EXIST;
+  }
+
+  Table *base_table = find_table(base_table_name);
+  if (base_table == nullptr) {
+    LOG_WARN("base table not found. view=%s, base table=%s", view_name, base_table_name);
+    return RC::SCHEMA_TABLE_NOT_EXIST;
+  }
+
+  view_aliases_[view_name] = base_table->name();
+  LOG_INFO("Create view alias success. view name=%s, base table=%s", view_name, base_table->name());
+  return RC::SUCCESS;
+}
+
 RC Db::drop_table(const char *table_name)
 {
+  auto view_iter = view_aliases_.find(table_name);
+  if (view_iter != view_aliases_.end()) {
+    view_aliases_.erase(view_iter);
+    LOG_INFO("Drop view alias success. view name=%s", table_name);
+    return RC::SUCCESS;
+  }
+
   // 检查表是否存在
   auto iter = opened_tables_.find(table_name);
   if (iter == opened_tables_.end()) {
@@ -124,6 +152,13 @@ RC Db::drop_table(const char *table_name)
   }
 
   delete table;
+  for (auto alias_iter = view_aliases_.begin(); alias_iter != view_aliases_.end();) {
+    if (alias_iter->second == table_name) {
+      alias_iter = view_aliases_.erase(alias_iter);
+    } else {
+      ++alias_iter;
+    }
+  }
   LOG_INFO("Drop table success. table name=%s", table_name);
   return RC::SUCCESS;
 }
@@ -133,6 +168,13 @@ Table *Db::find_table(const char *table_name) const
   std::unordered_map<std::string, Table *>::const_iterator iter = opened_tables_.find(table_name);
   if (iter != opened_tables_.end()) {
     return iter->second;
+  }
+  auto view_iter = view_aliases_.find(table_name);
+  if (view_iter != view_aliases_.end()) {
+    iter = opened_tables_.find(view_iter->second);
+    if (iter != opened_tables_.end()) {
+      return iter->second;
+    }
   }
   return nullptr;
 }
@@ -193,6 +235,9 @@ void Db::all_tables(std::vector<std::string> &table_names) const
 {
   for (const auto &table_item : opened_tables_) {
     table_names.emplace_back(table_item.first);
+  }
+  for (const auto &view_item : view_aliases_) {
+    table_names.emplace_back(view_item.first);
   }
 }
 

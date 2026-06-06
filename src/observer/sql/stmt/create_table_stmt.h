@@ -39,6 +39,13 @@ public:
           is_ctas_(true),
           select_sql_(std::move(select_sql))
   {}
+  CreateTableStmt(const std::string &table_name, const std::vector<AttrInfoSqlNode> &attr_infos,
+      SelectSqlNode &&select_sql)
+        : table_name_(table_name),
+          attr_infos_(attr_infos),
+          is_ctas_(true),
+          select_sql_(std::move(select_sql))
+  {}
   virtual ~CreateTableStmt() = default;
 
   StmtType type() const override { return StmtType::CREATE_TABLE; }

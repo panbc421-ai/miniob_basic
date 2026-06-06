@@ -35,6 +35,9 @@ enum AttrType
 const char *attr_type_to_string(AttrType type);
 AttrType attr_type_from_string(const char *s);
 
+std::string store_text_value(const std::string &text);
+bool load_text_value(const char *data, int length, std::string &text);
+
 /**
  * @brief 属性的值
  * 

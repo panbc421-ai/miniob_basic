@@ -15,10 +15,12 @@ See the Mulan PSL v2 for more details. */
 #include <limits.h>
 #include <string.h>
 #include <algorithm>
+#include <string>
 
 #include "common/defs.h"
 #include "storage/table/table.h"
 #include "storage/table/table_meta.h"
+#include "sql/parser/value.h"
 #include "common/log/log.h"
 #include "common/lang/string.h"
 #include "storage/buffer/disk_buffer_pool.h"
@@ -398,6 +400,15 @@ RC Table::make_record(int value_num, const Value *values, Record &record)
       continue;
     }
     size_t copy_len = field->len();
+    if (field->type() == TEXTS) {
+      std::string text = value.get_string();
+      if (text.size() + 1 > static_cast<size_t>(field->len())) {
+        const std::string key = store_text_value(text);
+        copy_len = std::min(static_cast<size_t>(field->len()), key.size() + 1);
+        memcpy(record_data + field->offset(), key.data(), copy_len);
+        continue;
+      }
+    }
     if (field->type() == CHARS || field->type() == TEXTS) {
       const size_t data_len = value.length();
       if (copy_len > data_len) {
