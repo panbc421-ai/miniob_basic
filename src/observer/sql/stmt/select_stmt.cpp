@@ -7,6 +7,8 @@
 #include "storage/table/table.h"
 #include "sql/expr/expression.h"
 
+#include <unordered_set>
+
 // Walk expression tree and collect AggregationExpr nodes, replacing them
 // with FieldExpr references for the aggregation output tuple.
 static void collect_aggregations(Expression *&expr, Table *default_table,
@@ -136,10 +138,21 @@ RC SelectStmt::create(Db *db, const SelectSqlNode &select_sql, Stmt *&stmt,
   }
 
   // Add alias entries to table_map (alias -> table)
+  std::unordered_set<std::string> used_table_aliases;
   for (size_t i = 0; i < select_sql.aliases.size() && i < select_sql.relations.size(); i++) {
     const std::string &alias = select_sql.aliases[i];
     if (!alias.empty()) {
+      if (used_table_aliases.find(alias) != used_table_aliases.end()) {
+        LOG_WARN("duplicate table alias: %s", alias.c_str());
+        return RC::INVALID_ARGUMENT;
+      }
+      used_table_aliases.insert(alias);
+
       const std::string &table_name = select_sql.relations[i];
+      if (table_map.find(alias) != table_map.end() && alias != table_name) {
+        LOG_WARN("table alias conflicts with an existing table name: %s", alias.c_str());
+        return RC::INVALID_ARGUMENT;
+      }
       auto it = table_map.find(table_name);
       if (it != table_map.end()) {
         table_map.insert(std::pair<std::string, Table *>(alias, it->second));

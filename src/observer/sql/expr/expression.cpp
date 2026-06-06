@@ -535,6 +535,11 @@ RC ArithmeticExpr::calc_value(const Value &left_value, const Value &right_value,
 {
   RC rc = RC::SUCCESS;
 
+  if (left_value.is_null() || (right_ && right_value.is_null())) {
+    value.set_null(true);
+    return rc;
+  }
+
   const AttrType target_type = value_type();
 
   switch (arithmetic_type_) {
@@ -565,13 +570,13 @@ RC ArithmeticExpr::calc_value(const Value &left_value, const Value &right_value,
     case Type::DIV: {
       if (target_type == AttrType::INTS) {
         if (right_value.get_int() == 0) {
-          value.set_int(numeric_limits<int>::max());
+          value.set_null(true);
         } else {
           value.set_int(left_value.get_int() / right_value.get_int());
         }
       } else {
         if (right_value.get_float() > -EPSILON && right_value.get_float() < EPSILON) {
-          value.set_float(numeric_limits<float>::max());
+          value.set_null(true);
         } else {
           value.set_float(left_value.get_float() / right_value.get_float());
         }
