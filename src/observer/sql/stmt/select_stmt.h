@@ -77,10 +77,15 @@ public:
   {
     return select_exprs_;
   }
+  bool ordered_projection() const
+  {
+    return ordered_projection_;
+  }
 
 private:
   std::vector<Field> query_fields_;
   std::vector<SelectExprNode> select_exprs_;
+  bool ordered_projection_ = false;
   std::vector<Table *> tables_;
   FilterStmt *filter_stmt_ = nullptr;
   FilterStmt *having_filter_stmt_ = nullptr;

@@ -247,6 +247,30 @@ RC SelectStmt::create(Db *db, const SelectSqlNode &select_sql, Stmt *&stmt,
 
   // === 处理 select_sql.expressions ===
   std::vector<SelectExprNode> select_exprs;
+  bool ordered_projection = false;
+  if (!select_sql.expressions.empty() && select_sql.group_by.empty()) {
+    for (const auto &sel_expr : select_sql.expressions) {
+      if (sel_expr.expr != nullptr && sel_expr.expr->type() == ExprType::UNBOUND_FIELD) {
+        auto *uf = static_cast<UnboundFieldExpr *>(sel_expr.expr);
+        if (!sel_expr.alias.empty() && sel_expr.alias != uf->field_name()) {
+          ordered_projection = true;
+          break;
+        }
+      }
+    }
+  }
+
+  auto append_ordered_field = [&](const Field &field, const std::string &alias) {
+    query_fields.push_back(field);
+    auto *fe = new FieldExpr(field);
+    std::string output_name = alias.empty() ? field.field_name() : alias;
+    fe->set_name(output_name);
+
+    SelectExprNode resolved;
+    resolved.alias = output_name;
+    resolved.expr = fe;
+    select_exprs.push_back(std::move(resolved));
+  };
   if (!select_sql.expressions.empty()) {
     for (size_t i = 0; i < select_sql.expressions.size(); i++) {
       const auto &sel_expr = select_sql.expressions[i];
@@ -255,7 +279,18 @@ RC SelectStmt::create(Db *db, const SelectSqlNode &select_sql, Stmt *&stmt,
       if (sel_expr.is_star) {
         if (sel_expr.star_table.empty()) {
           for (Table *table : tables) {
-            wildcard_fields(table, query_fields);
+            if (ordered_projection) {
+              std::vector<Field> expanded_fields;
+              wildcard_fields(table, expanded_fields);
+              for (const Field &field : expanded_fields) {
+                std::string alias = tables.size() > 1
+                    ? std::string(field.table_name()) + "." + field.field_name()
+                    : std::string(field.field_name());
+                append_ordered_field(field, alias);
+              }
+            } else {
+              wildcard_fields(table, query_fields);
+            }
           }
         } else {
           auto iter = table_map.find(sel_expr.star_table);
@@ -263,7 +298,18 @@ RC SelectStmt::create(Db *db, const SelectSqlNode &select_sql, Stmt *&stmt,
             LOG_WARN("no such table for star expansion: %s", sel_expr.star_table.c_str());
             return RC::SCHEMA_TABLE_NOT_EXIST;
           }
-          wildcard_fields(iter->second, query_fields);
+          if (ordered_projection) {
+            std::vector<Field> expanded_fields;
+            wildcard_fields(iter->second, expanded_fields);
+            for (const Field &field : expanded_fields) {
+              std::string alias = tables.size() > 1
+                  ? std::string(field.table_name()) + "." + field.field_name()
+                  : std::string(field.field_name());
+              append_ordered_field(field, alias);
+            }
+          } else {
+            wildcard_fields(iter->second, query_fields);
+          }
         }
         continue;
       }
@@ -336,6 +382,17 @@ RC SelectStmt::create(Db *db, const SelectSqlNode &select_sql, Stmt *&stmt,
 
       if (!alias.empty()) {
         e->set_name(alias);
+      }
+
+      if (ordered_projection && e->type() == ExprType::FIELD) {
+        auto *fe = static_cast<FieldExpr *>(e.get());
+        query_fields.push_back(fe->field());
+
+        SelectExprNode resolved;
+        resolved.alias = alias.empty() ? fe->field().field_name() : alias;
+        resolved.expr = e.release();
+        select_exprs.push_back(std::move(resolved));
+        continue;
       }
 
       if (e->type() == ExprType::FIELD && implicit_alias) {
@@ -439,6 +496,7 @@ RC SelectStmt::create(Db *db, const SelectSqlNode &select_sql, Stmt *&stmt,
   select_stmt->has_aggregation_ = has_aggregation;
   select_stmt->order_by_ = select_sql.order_by;
   select_stmt->select_exprs_.swap(select_exprs);
+  select_stmt->ordered_projection_ = ordered_projection;
   select_stmt->group_by_fields_.swap(group_by_fields);
   stmt = select_stmt;
   return RC::SUCCESS;

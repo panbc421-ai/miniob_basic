@@ -96,18 +96,28 @@ RC ExecuteStage::handle_request_with_physical_operator(SQLStageEvent *sql_event)
     }
   } else {
     bool with_table_name = select_stmt->tables().size() > 1;
-    for (const Field &field : select_stmt->query_fields()) {
-      if (with_table_name) {
-        schema.append_cell(field.table_name(), field.field_name());
-      } else {
-        schema.append_cell(field.field_name());
+    if (select_stmt->ordered_projection()) {
+      for (const SelectExprNode &se : select_stmt->select_exprs()) {
+        if (!se.alias.empty()) {
+          schema.append_cell(se.alias.c_str());
+        } else if (se.expr != nullptr) {
+          schema.append_cell(se.expr->name().c_str());
+        }
       }
-    }
-    for (const SelectExprNode &se : select_stmt->select_exprs()) {
-      if (!se.alias.empty()) {
-        schema.append_cell(se.alias.c_str());
-      } else if (se.expr != nullptr) {
-        schema.append_cell(se.expr->name().c_str());
+    } else {
+      for (const Field &field : select_stmt->query_fields()) {
+        if (with_table_name) {
+          schema.append_cell(field.table_name(), field.field_name());
+        } else {
+          schema.append_cell(field.field_name());
+        }
+      }
+      for (const SelectExprNode &se : select_stmt->select_exprs()) {
+        if (!se.alias.empty()) {
+          schema.append_cell(se.alias.c_str());
+        } else if (se.expr != nullptr) {
+          schema.append_cell(se.expr->name().c_str());
+        }
       }
     }
   }

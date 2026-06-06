@@ -425,8 +425,10 @@ RC LogicalPlanGenerator::create_plan(
   auto &select_exprs_ref = select_stmt->select_exprs();
   if (!select_exprs_ref.empty()) {
     auto &proj_exprs = static_cast<ProjectLogicalOperator *>(project_oper.get())->expressions();
-    for (const auto &f : all_fields) {
-      proj_exprs.emplace_back(new FieldExpr(f));
+    if (!select_stmt->ordered_projection()) {
+      for (const auto &f : all_fields) {
+        proj_exprs.emplace_back(new FieldExpr(f));
+      }
     }
     for (auto &se : select_exprs_ref) {
       if (se.expr) {
