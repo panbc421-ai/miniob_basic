@@ -205,14 +205,13 @@ static RC eval_scalar_subquery(Db *db, const SelectSqlNode &sel_node, Trx *trx, 
   if (rc != RC::SUCCESS) { delete sel_stmt; return rc; }
 
   std::vector<Value> values;
-  int row_count = 0;
   while ((rc = phys_oper->next()) == RC::SUCCESS) {
     Tuple *tuple = phys_oper->current_tuple();
     if (tuple == nullptr) break;
-    row_count++;
     Value v;
-    if (values.empty() && tuple->cell_at(0, v) == RC::SUCCESS) {
+    if (tuple->cell_at(0, v) == RC::SUCCESS) {
       values.push_back(v);
+      break;
     }
   }
   phys_oper->close();
@@ -226,13 +225,32 @@ static RC eval_scalar_subquery(Db *db, const SelectSqlNode &sel_node, Trx *trx, 
   return RC::SUCCESS;
 }
 
+static RC finish_update_trx(Session *session, RC rc)
+{
+  if (session == nullptr || session->is_trx_multi_operation_mode()) {
+    return rc;
+  }
+
+  Trx *trx = session->current_trx();
+  if (rc == RC::SUCCESS) {
+    return trx->commit();
+  }
+
+  RC rollback_rc = trx->rollback();
+  if (rollback_rc != RC::SUCCESS) {
+    LOG_PANIC("rollback update transaction failed. rc=%s", strrc(rollback_rc));
+  }
+  return rc;
+}
+
 RC UpdateExecutor::execute(SQLStageEvent *sql_event)
 {
   UpdateStmt *stmt = static_cast<UpdateStmt *>(sql_event->stmt());
   Table *table = stmt->table();
   FilterStmt *filter_stmt = stmt->filter_stmt();
-  Trx *trx = sql_event->session_event()->session()->current_trx();
-  Db *db = sql_event->session_event()->session()->get_current_db();
+  Session *session = sql_event->session_event()->session();
+  Trx *trx = session->current_trx();
+  Db *db = session->get_current_db();
   RC rc = trx->start_if_need();
   if (rc != RC::SUCCESS) {
     LOG_WARN("failed to start transaction for update. rc=%s", strrc(rc));
@@ -249,7 +267,7 @@ RC UpdateExecutor::execute(SQLStageEvent *sql_event)
       RC rc = eval_scalar_subquery(db, *unit.subquery, trx, new_values[i]);
       if (rc != RC::SUCCESS) {
         LOG_WARN("failed to evaluate subquery in update set. rc=%s", strrc(rc));
-        return rc;
+        return finish_update_trx(session, rc);
       }
     } else {
       new_values[i] = unit.value;
@@ -264,7 +282,7 @@ RC UpdateExecutor::execute(SQLStageEvent *sql_event)
     if (coerce_rc != RC::SUCCESS) {
       LOG_WARN("failed to coerce update value. field=%s field_type=%d value_type=%d",
                field_meta->name(), field_meta->type(), new_values[i].attr_type());
-      return coerce_rc;
+      return finish_update_trx(session, coerce_rc);
     }
     new_values[i] = coerced;
   }
@@ -290,7 +308,7 @@ RC UpdateExecutor::execute(SQLStageEvent *sql_event)
   rc = table->get_record_scanner(scanner, trx, false);
   if (rc != RC::SUCCESS) {
     LOG_WARN("failed to get record scanner. rc=%s", strrc(rc));
-    return rc;
+    return finish_update_trx(session, rc);
   }
 
   std::vector<std::pair<RID, std::vector<char>>> records_to_update;
@@ -306,7 +324,7 @@ RC UpdateExecutor::execute(SQLStageEvent *sql_event)
         rc = eval_update_filter_unit(filter_unit, record, table, cond);
         if (rc != RC::SUCCESS) {
           scanner.close_scan();
-          return rc;
+          return finish_update_trx(session, rc);
         }
         if (!cond) { match = false; break; }
       }
@@ -357,20 +375,20 @@ RC UpdateExecutor::execute(SQLStageEvent *sql_event)
     rc = table->make_record(normal_field_num, values.data(), new_record);
     if (rc != RC::SUCCESS) {
       LOG_WARN("failed to make new record for update. rc=%s", strrc(rc));
-      return rc;
+      return finish_update_trx(session, rc);
     }
 
     rc = table->delete_record(old_record);
     if (rc != RC::SUCCESS) {
       LOG_WARN("failed to delete record. rc=%s", strrc(rc));
-      return rc;
+      return finish_update_trx(session, rc);
     }
     rc = table->insert_record(new_record);
     if (rc != RC::SUCCESS) {
       LOG_WARN("failed to insert updated record. rc=%s", strrc(rc));
-      return rc;
+      return finish_update_trx(session, rc);
     }
   }
 
-  return RC::SUCCESS;
+  return finish_update_trx(session, RC::SUCCESS);
 }

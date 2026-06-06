@@ -22,6 +22,7 @@ See the Mulan PSL v2 for more details. */
 #include <fstream>
 #include <iomanip>
 #include <iostream>
+#include <cmath>
 #include <memory>
 #include <string>
 
@@ -272,6 +273,7 @@ char *substr(const char *s, int n1, int n2)
  */
 std::string double_to_str(double v)
 {
+  v = std::round(v * 100.0) / 100.0;
   char buf[256];
   snprintf(buf, sizeof(buf), "%.2f", v);
   size_t len = strlen(buf);

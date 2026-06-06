@@ -34,6 +34,7 @@ static bool field_data_is_null(const char *record, const FieldMeta *field)
   if (record == nullptr || field == nullptr || !field->nullable()) {
     return false;
   }
+
   const char *field_data = record + field->offset();
   for (int i = 0; i < field->len(); i++) {
     if (field_data[i] != 0) {
@@ -52,6 +53,11 @@ static bool index_key_has_null(const TableMeta &table_meta, const IndexMeta &ind
     }
   }
   return false;
+}
+
+static bool skip_unique_null_key(const TableMeta &table_meta, const IndexMeta &index_meta, const char *record)
+{
+  return index_meta.is_unique() && index_key_has_null(table_meta, index_meta, record);
 }
 
 Table::~Table()
@@ -245,9 +251,10 @@ RC Table::insert_record(Record &record)
   // 检查唯一索引约束
   for (Index *index : indexes_) {
     if (index->index_meta().is_unique()) {
-      if (index_key_has_null(table_meta_, index->index_meta(), record.data())) {
+      if (skip_unique_null_key(table_meta_, index->index_meta(), record.data())) {
         continue;
       }
+
       std::vector<char> key(index->key_length());
       index->build_record_key(record.data(), key.data());
       IndexScanner *scanner = index->create_scanner(key.data(), index->key_length(), true, key.data(), index->key_length(), true);
@@ -478,17 +485,12 @@ RC Table::create_index(Trx *trx, const std::vector<const FieldMeta *> &field_met
                name(), index_name, strrc(rc));
       return rc;
     }
+    if (skip_unique_null_key(table_meta_, new_index_meta, record.data())) {
+      continue;
+    }
+
     // 对于唯一索引，检查是否已存在相同键值
     if (is_unique) {
-      if (index_key_has_null(table_meta_, new_index_meta, record.data())) {
-        rc = index->insert_entry(record.data(), &record.rid());
-        if (rc != RC::SUCCESS) {
-          LOG_WARN("failed to insert nullable record into index while creating index. table=%s, index=%s, rc=%s",
-                   name(), index_name, strrc(rc));
-          return rc;
-        }
-        continue;
-      }
       std::vector<char> key(index->key_length());
       index->build_record_key(record.data(), key.data());
       IndexScanner *key_scanner = index->create_scanner(
@@ -559,8 +561,12 @@ RC Table::delete_record(const Record &record)
 {
   RC rc = RC::SUCCESS;
   for (Index *index : indexes_) {
+    if (skip_unique_null_key(table_meta_, index->index_meta(), record.data())) {
+      continue;
+    }
+
     rc = index->delete_entry(record.data(), &record.rid());
-    ASSERT(RC::SUCCESS == rc, 
+    ASSERT(RC::SUCCESS == rc,
            "failed to delete entry from index. table name=%s, index name=%s, rid=%s, rc=%s",
            name(), index->index_meta().name(), record.rid().to_string().c_str(), strrc(rc));
   }
@@ -572,6 +578,10 @@ RC Table::insert_entry_of_indexes(const char *record, const RID &rid)
 {
   RC rc = RC::SUCCESS;
   for (Index *index : indexes_) {
+    if (skip_unique_null_key(table_meta_, index->index_meta(), record)) {
+      continue;
+    }
+
     rc = index->insert_entry(record, &rid);
     if (rc != RC::SUCCESS) {
       break;
@@ -584,6 +594,10 @@ RC Table::delete_entry_of_indexes(const char *record, const RID &rid, bool error
 {
   RC rc = RC::SUCCESS;
   for (Index *index : indexes_) {
+    if (skip_unique_null_key(table_meta_, index->index_meta(), record)) {
+      continue;
+    }
+
     rc = index->delete_entry(record, &rid);
     if (rc != RC::SUCCESS) {
       if (rc != RC::RECORD_INVALID_KEY || !error_on_not_exists) {
