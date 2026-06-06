@@ -250,9 +250,7 @@ int Value::compare(const Value &other) const
         return common::compare_int((void *)&this->num_value_.date_value_, (void *)&other.num_value_.date_value_);
       } break;
       case BOOLEANS: {
-        int left_value = this->num_value_.bool_value_ ? 1 : 0;
-        int right_value = other.num_value_.bool_value_ ? 1 : 0;
-        return common::compare_int((void *)&left_value, (void *)&right_value);
+        return common::compare_int((void *)&this->num_value_.bool_value_, (void *)&other.num_value_.bool_value_);
       }
       default: {
         LOG_WARN("unsupported type: %d", this->attr_type_);
