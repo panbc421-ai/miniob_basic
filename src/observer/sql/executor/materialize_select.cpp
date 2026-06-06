@@ -219,7 +219,8 @@ static RC create_select_physical_plan(SelectStmt *select_stmt, std::unique_ptr<P
 RC materialize_select_as_table(Db *db, Trx *trx, bool auto_commit,
     const char *table_name, SelectSqlNode &select_sql,
     const std::vector<AttrInfoSqlNode> *specified_attrs,
-    const std::vector<std::string> *specified_column_names)
+    const std::vector<std::string> *specified_column_names,
+    bool output_nullable)
 {
   if (db == nullptr || trx == nullptr || table_name == nullptr || table_name[0] == '\0') {
     return RC::INVALID_ARGUMENT;
@@ -254,6 +255,11 @@ RC materialize_select_as_table(Db *db, Trx *trx, bool auto_commit,
       for (size_t i = 0; i < attr_infos.size(); i++) {
         attr_infos[i].name = (*specified_column_names)[i];
       }
+    }
+  }
+  if (output_nullable) {
+    for (AttrInfoSqlNode &attr : attr_infos) {
+      attr.nullable = true;
     }
   }
   if (attr_infos.empty()) {

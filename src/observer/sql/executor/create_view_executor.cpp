@@ -66,5 +66,6 @@ RC CreateViewExecutor::execute(SQLStageEvent *sql_event)
   return materialize_select_as_table(session->get_current_db(),
       session->current_trx(), auto_commit,
       stmt->view_name().c_str(), stmt->select_sql(),
-      nullptr, stmt->column_names().empty() ? nullptr : &stmt->column_names());
+      nullptr, stmt->column_names().empty() ? nullptr : &stmt->column_names(),
+      true);
 }

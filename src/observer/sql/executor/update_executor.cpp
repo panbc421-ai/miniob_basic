@@ -4,6 +4,7 @@
 #include "sql/stmt/update_stmt.h"
 #include "sql/stmt/filter_stmt.h"
 #include "sql/stmt/select_stmt.h"
+#include "sql/expr/expression.h"
 #include "sql/optimizer/logical_plan_generator.h"
 #include "sql/optimizer/physical_plan_generator.h"
 #include "sql/operator/aggregation_physical_operator.h"
@@ -103,31 +104,110 @@ static RC coerce_update_value(const FieldMeta *field_meta, const Value &input, V
   return RC::SCHEMA_FIELD_TYPE_MISMATCH;
 }
 
-static Value default_update_value_for_field(const FieldMeta *field_meta)
+static RC validate_update_subquery_relations(Db *db, const SelectSqlNode &select_sql);
+
+static RC validate_expr_subquery_relations(Db *db, Expression *expr)
 {
-  Value value;
-  switch (field_meta->type()) {
-    case INTS:
-      value.set_int(0);
-      break;
-    case FLOATS:
-      value.set_float(0);
-      break;
-    case DATES:
-      value.set_date(0);
-      break;
-    case CHARS:
-    case TEXTS:
-      value.set_string("");
-      break;
-    case BOOLEANS:
-      value.set_boolean(false);
-      break;
-    default:
-      value.set_null(true);
-      break;
+  if (expr == nullptr) {
+    return RC::SUCCESS;
   }
-  return value;
+
+  switch (expr->type()) {
+    case ExprType::SUBQUERY: {
+      auto *subquery = dynamic_cast<SubQueryExpr *>(expr);
+      if (subquery != nullptr && subquery->select_node() != nullptr) {
+        return validate_update_subquery_relations(db, *subquery->select_node());
+      }
+      return RC::SUCCESS;
+    }
+    case ExprType::ARITHMETIC: {
+      auto *arith = static_cast<ArithmeticExpr *>(expr);
+      RC rc = validate_expr_subquery_relations(db, arith->left().get());
+      if (rc != RC::SUCCESS) {
+        return rc;
+      }
+      return validate_expr_subquery_relations(db, arith->right().get());
+    }
+    case ExprType::COMPARISON: {
+      auto *cmp = static_cast<ComparisonExpr *>(expr);
+      RC rc = validate_expr_subquery_relations(db, cmp->left().get());
+      if (rc != RC::SUCCESS) {
+        return rc;
+      }
+      return validate_expr_subquery_relations(db, cmp->right().get());
+    }
+    case ExprType::CONJUNCTION: {
+      auto *conj = static_cast<ConjunctionExpr *>(expr);
+      for (auto &child : conj->children()) {
+        RC rc = validate_expr_subquery_relations(db, child.get());
+        if (rc != RC::SUCCESS) {
+          return rc;
+        }
+      }
+      return RC::SUCCESS;
+    }
+    case ExprType::CAST: {
+      auto *cast_expr = static_cast<CastExpr *>(expr);
+      return validate_expr_subquery_relations(db, cast_expr->child().get());
+    }
+    case ExprType::FUNCTION: {
+      auto *func = static_cast<FunctionExpr *>(expr);
+      for (auto &arg : func->args()) {
+        RC rc = validate_expr_subquery_relations(db, arg.get());
+        if (rc != RC::SUCCESS) {
+          return rc;
+        }
+      }
+      return RC::SUCCESS;
+    }
+    default:
+      return RC::SUCCESS;
+  }
+}
+
+static RC validate_update_subquery_relations(Db *db, const SelectSqlNode &select_sql)
+{
+  if (db == nullptr) {
+    return RC::INVALID_ARGUMENT;
+  }
+
+  for (const std::string &relation : select_sql.relations) {
+    if (db->find_table(relation.c_str()) == nullptr) {
+      LOG_WARN("no such table in update subquery. table=%s", relation.c_str());
+      return RC::SCHEMA_TABLE_NOT_EXIST;
+    }
+  }
+
+  for (const SelectExprNode &expr : select_sql.expressions) {
+    RC rc = validate_expr_subquery_relations(db, expr.expr);
+    if (rc != RC::SUCCESS) {
+      return rc;
+    }
+  }
+
+  for (const ConditionSqlNode &condition : select_sql.conditions) {
+    RC rc = validate_expr_subquery_relations(db, condition.left_expr);
+    if (rc != RC::SUCCESS) {
+      return rc;
+    }
+    rc = validate_expr_subquery_relations(db, condition.right_expr);
+    if (rc != RC::SUCCESS) {
+      return rc;
+    }
+  }
+
+  for (const ConditionSqlNode &condition : select_sql.having) {
+    RC rc = validate_expr_subquery_relations(db, condition.left_expr);
+    if (rc != RC::SUCCESS) {
+      return rc;
+    }
+    rc = validate_expr_subquery_relations(db, condition.right_expr);
+    if (rc != RC::SUCCESS) {
+      return rc;
+    }
+  }
+
+  return RC::SUCCESS;
 }
 
 static void read_record_field_value(const char *record_data, const FieldMeta *field_meta, Value &value)
@@ -296,6 +376,15 @@ RC UpdateExecutor::execute(SQLStageEvent *sql_event)
 
   const std::vector<UpdateUnit> &units = stmt->units();
 
+  for (const UpdateUnit &unit : units) {
+    if (unit.is_subquery) {
+      rc = validate_update_subquery_relations(db, *unit.subquery);
+      if (rc != RC::SUCCESS) {
+        return finish_update_trx(session, rc);
+      }
+    }
+  }
+
   const int sys_field_num = table->table_meta().sys_field_num();
   const int field_num = table->table_meta().field_num();
   const int normal_field_num = field_num - sys_field_num;
@@ -353,13 +442,11 @@ RC UpdateExecutor::execute(SQLStageEvent *sql_event)
   // has found rows. A no-op UPDATE should not fail just because its SET
   // subquery would be empty or non-scalar.
   std::vector<Value> new_values(units.size());
-  std::vector<char> subquery_empty(units.size(), 0);
   for (size_t i = 0; i < units.size(); i++) {
     const UpdateUnit &unit = units[i];
     if (unit.is_subquery) {
       bool empty = false;
       RC rc = eval_scalar_subquery(db, *unit.subquery, trx, new_values[i], empty);
-      subquery_empty[i] = empty ? 1 : 0;
       if (rc != RC::SUCCESS) {
         LOG_WARN("failed to evaluate subquery in update set. rc=%s", strrc(rc));
         return finish_update_trx(session, rc);
@@ -371,9 +458,6 @@ RC UpdateExecutor::execute(SQLStageEvent *sql_event)
 
   for (size_t i = 0; i < units.size(); i++) {
     const FieldMeta *field_meta = units[i].field_meta;
-    if (units[i].is_subquery && subquery_empty[i] && new_values[i].is_null() && !field_meta->nullable()) {
-      new_values[i] = default_update_value_for_field(field_meta);
-    }
     Value coerced;
     RC coerce_rc = coerce_update_value(field_meta, new_values[i], coerced);
     if (coerce_rc != RC::SUCCESS) {
