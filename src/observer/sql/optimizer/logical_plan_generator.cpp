@@ -82,11 +82,19 @@ static void collect_table_refs(Expression *expr, std::set<std::string> &tables)
   }
 }
 
+static SelectSqlNode clone_select_sql_node(const SelectSqlNode &src);
+
 // 深克隆一个表达式树（用于将已解析的表达式从 FilterUnit 复制到 ComparisonExpr）
 static std::unique_ptr<Expression> clone_expr_tree(Expression *e)
 {
   if (e == nullptr) return nullptr;
   switch (e->type()) {
+    case ExprType::UNBOUND_FIELD: {
+      auto *uf = static_cast<UnboundFieldExpr *>(e);
+      auto *copy = new UnboundFieldExpr(uf->table_name(), uf->field_name());
+      copy->set_name(e->name());
+      return std::unique_ptr<Expression>(copy);
+    }
     case ExprType::FIELD: {
       auto *fe = static_cast<FieldExpr *>(e);
       return std::unique_ptr<Expression>(new FieldExpr(fe->field()));
@@ -139,11 +147,67 @@ static std::unique_ptr<Expression> clone_expr_tree(Expression *e)
       auto *cf = static_cast<CorrelatedFieldExpr *>(e);
       return std::unique_ptr<Expression>(new CorrelatedFieldExpr(cf->table_name(), cf->field_name(), cf->field_meta()));
     }
+    case ExprType::SUBQUERY: {
+      auto *sq = dynamic_cast<SubQueryExpr *>(e);
+      if (sq != nullptr && sq->select_node() != nullptr) {
+        SelectSqlNode copy = clone_select_sql_node(*sq->select_node());
+        return std::unique_ptr<Expression>(new SubQueryExpr(new SelectSqlNode(std::move(copy))));
+      }
+      return std::unique_ptr<Expression>(new ValueExpr(Value(true)));
+    }
+    case ExprType::IN_LIST: {
+      auto *inlist = static_cast<InListExpr *>(e);
+      std::vector<Value> values = inlist->values();
+      return std::unique_ptr<Expression>(new InListExpr(std::move(values)));
+    }
     default:
       // For SubQueryExpr and other non-clonable types, return a boolean ValueExpr
       // to prevent crashes from nullptr left/right in ComparisonExpr
       return std::unique_ptr<Expression>(new ValueExpr(Value(true)));
   }
+}
+
+static SelectSqlNode clone_select_sql_node(const SelectSqlNode &src)
+{
+  SelectSqlNode dst;
+  dst.relations = src.relations;
+  dst.aliases = src.aliases;
+  dst.attributes = src.attributes;
+  dst.group_by = src.group_by;
+  dst.order_by = src.order_by;
+
+  for (const ConditionSqlNode &cond : src.conditions) {
+    ConditionSqlNode copy;
+    copy.left_is_attr = cond.left_is_attr;
+    copy.left_attr = cond.left_attr;
+    copy.left_value = cond.left_value;
+    copy.comp = cond.comp;
+    copy.right_is_attr = cond.right_is_attr;
+    copy.right_attr = cond.right_attr;
+    copy.right_value = cond.right_value;
+    if (cond.left_expr != nullptr) {
+      copy.left_expr = clone_expr_tree(cond.left_expr).release();
+    }
+    if (cond.right_expr != nullptr) {
+      copy.right_expr = clone_expr_tree(cond.right_expr).release();
+    }
+    dst.conditions.emplace_back(std::move(copy));
+  }
+
+  for (const SelectExprNode &item : src.expressions) {
+    SelectExprNode copy;
+    copy.alias = item.alias;
+    copy.agg_type = item.agg_type;
+    copy.agg_field = item.agg_field;
+    copy.agg_table = item.agg_table;
+    copy.is_star = item.is_star;
+    copy.star_table = item.star_table;
+    if (item.expr != nullptr) {
+      copy.expr = clone_expr_tree(item.expr).release();
+    }
+    dst.expressions.emplace_back(std::move(copy));
+  }
+  return dst;
 }
 
 // Correlated-subquery runtime predicates use SUBQUERY type but are not SubQueryExpr.

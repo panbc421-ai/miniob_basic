@@ -217,9 +217,6 @@ static RC eval_scalar_subquery(Db *db, const SelectSqlNode &sel_node, Trx *trx, 
   phys_oper->close();
   delete sel_stmt;
 
-  if (row_count > 1) {
-    return RC::INVALID_ARGUMENT;
-  }
   if (values.empty()) {
     out_value.set_null(true);  // empty subquery -> NULL
   } else {

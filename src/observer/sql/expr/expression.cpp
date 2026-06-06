@@ -15,8 +15,15 @@ See the Mulan PSL v2 for more details. */
 #include "sql/expr/expression.h"
 #include "sql/expr/tuple.h"
 #include "sql/parser/parse_defs.h"
+#include "sql/stmt/select_stmt.h"
+#include "sql/optimizer/logical_plan_generator.h"
+#include "sql/optimizer/physical_plan_generator.h"
+#include "sql/operator/aggregation_physical_operator.h"
+#include "session/session.h"
+#include "storage/db/db.h"
 #include "storage/table/table.h"
 #include "storage/field/field_meta.h"
+#include "storage/trx/trx.h"
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -816,8 +823,88 @@ SubQueryExpr::~SubQueryExpr()
 
 RC SubQueryExpr::get_value(const Tuple &tuple, Value &value) const
 {
+  (void)tuple;
+  SubQueryExpr *self = const_cast<SubQueryExpr *>(this);
+  if (self->executed_) {
+    if (self->result_values_.empty()) {
+      value.set_null(true);
+    } else {
+      value = self->result_values_.front();
+    }
+    return RC::SUCCESS;
+  }
+
+  Session *session = Session::current_session();
+  Db *db = session == nullptr ? nullptr : session->get_current_db();
+  Trx *trx = session == nullptr ? nullptr : session->current_trx();
+  if (db == nullptr) {
+    return RC::INTERNAL;
+  }
+
+  Stmt *inner_stmt = nullptr;
+  RC rc = SelectStmt::create(db, *self->select_node_, inner_stmt);
+  if (rc != RC::SUCCESS) {
+    return rc;
+  }
+  auto *sel_stmt = static_cast<SelectStmt *>(inner_stmt);
+
+  LogicalPlanGenerator logic_gen;
+  std::unique_ptr<LogicalOperator> logic_oper;
+  rc = logic_gen.create(sel_stmt, logic_oper);
+  if (rc != RC::SUCCESS) {
+    delete sel_stmt;
+    return rc;
+  }
+
+  PhysicalPlanGenerator phys_gen;
+  std::unique_ptr<PhysicalOperator> phys_oper;
+  rc = phys_gen.create(*logic_oper, phys_oper);
+  if (rc != RC::SUCCESS) {
+    delete sel_stmt;
+    return rc;
+  }
+
+  if (sel_stmt->has_aggregation()) {
+    auto *agg_oper = new AggregationPhysicalOperator();
+    for (const auto &af : sel_stmt->agg_fields()) {
+      agg_oper->add_aggregation(af.agg_type, af.table, af.field_meta, af.alias);
+    }
+    agg_oper->add_child(std::move(phys_oper));
+    phys_oper.reset(agg_oper);
+  }
+
+  rc = phys_oper->open(trx);
+  if (rc != RC::SUCCESS) {
+    delete sel_stmt;
+    return rc;
+  }
+
+  while ((rc = phys_oper->next()) == RC::SUCCESS) {
+    Tuple *inner_tuple = phys_oper->current_tuple();
+    if (inner_tuple == nullptr) {
+      break;
+    }
+    Value v;
+    if (inner_tuple->cell_at(0, v) == RC::SUCCESS) {
+      self->result_values_.push_back(v);
+      break;
+    }
+  }
+  phys_oper->close();
+  delete sel_stmt;
+
+  self->executed_ = true;
+  if (self->result_values_.empty()) {
+    value.set_null(true);
+  } else {
+    value = self->result_values_.front();
+  }
+  return RC::SUCCESS;
+#if 0
   // SubQueryExpr should be resolved (replaced) during filter creation.
   // If get_value is called, it means the subquery was not properly handled.
   LOG_WARN("SubQueryExpr::get_value called — should have been resolved during filter creation");
   return RC::INTERNAL;
+}
+#endif
 }
