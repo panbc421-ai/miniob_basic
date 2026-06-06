@@ -120,10 +120,10 @@ RC PhysicalPlanGenerator::create_plan(TableGetLogicalOperator &table_get_oper, u
 
       const Field &field = field_expr->field();
       Index *candidate = table->find_index_by_field(field.field_name());
-      // 复合索引只能做前缀列等值扫描；非首列（如 col4 on (col1,col4)）会构造错误键并崩溃
-      if (candidate != nullptr) {
+      // Avoid risky composite-key and NULL scans; table scan keeps correctness.
+      if (candidate != nullptr && value_expr != nullptr && !value_expr->get_value().is_null()) {
         const std::vector<std::string> &index_fields = candidate->index_meta().field_names();
-        if (!index_fields.empty() && 0 == strcmp(index_fields[0].c_str(), field.field_name())) {
+        if (index_fields.size() == 1 && 0 == strcmp(index_fields[0].c_str(), field.field_name())) {
           index = candidate;
           break;
         }

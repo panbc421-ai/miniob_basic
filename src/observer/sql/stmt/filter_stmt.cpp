@@ -820,6 +820,10 @@ if (comp < EQUAL_TO || comp >= NO_OP) {
               other_val = other_obj.value;
             }
           }
+          if (scalar_val.is_null() || other_val.is_null()) {
+            value.set_boolean(false);
+            return RC::SUCCESS;
+          }
           int cmp = right_is_subquery ? other_val.compare(scalar_val) : scalar_val.compare(other_val);
           bool result = false;
           switch (comp) {
