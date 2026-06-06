@@ -15,11 +15,13 @@ class PostAggTuple : public Tuple
 public:
   PostAggTuple(const std::vector<Field> &group_by_fields,
       const std::vector<AggregationField> &agg_fields,
-      const std::vector<Value> &group_values, const std::vector<Value> &agg_values)
+      const std::vector<Value> &group_values, const std::vector<Value> &agg_values,
+      int row_count)
       : group_by_fields_(group_by_fields),
         agg_fields_(agg_fields),
         group_values_(group_values),
-        agg_values_(agg_values)
+        agg_values_(agg_values),
+        row_count_(row_count)
   {}
 
   int cell_num() const override
@@ -41,6 +43,12 @@ public:
     const char *tbl = spec.table_name();
     const char *fld = spec.field_name();
     const char *alias = spec.alias();
+
+    if ((alias != nullptr && strcmp(alias, "count(*)") == 0) ||
+        (fld != nullptr && strcmp(fld, "count(*)") == 0)) {
+      cell.set_int(row_count_);
+      return RC::SUCCESS;
+    }
 
     for (size_t i = 0; i < group_by_fields_.size(); i++) {
       const Field &f = group_by_fields_[i];
@@ -81,6 +89,7 @@ private:
   const std::vector<AggregationField> &agg_fields_;
   const std::vector<Value> &group_values_;
   const std::vector<Value> &agg_values_;
+  int row_count_ = 0;
 };
 
 static RC eval_filter_unit(const FilterUnit *unit, const Tuple &tuple, bool &result)
@@ -142,7 +151,7 @@ bool GroupByPhysicalOperator::passes_having(const GroupResult &group) const
   if (having_filter_ == nullptr || having_filter_->filter_units().empty()) {
     return true;
   }
-  PostAggTuple tuple(group_by_fields_, agg_fields_, group.group_values, group.agg_values);
+  PostAggTuple tuple(group_by_fields_, agg_fields_, group.group_values, group.agg_values, group.row_count);
   for (const FilterUnit *unit : having_filter_->filter_units()) {
     bool ok = false;
     if (eval_filter_unit(unit, tuple, ok) != RC::SUCCESS) {
@@ -256,6 +265,7 @@ RC GroupByPhysicalOperator::next()
       } else {
         gi = it->second;
       }
+      groups_[gi].row_count++;
 
       // Accumulate aggregation values for this group
       Acc &acc = accs[gi];

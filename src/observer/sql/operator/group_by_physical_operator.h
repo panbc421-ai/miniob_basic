@@ -44,6 +44,7 @@ private:
   struct GroupResult {
     std::vector<Value> group_values;
     std::vector<Value> agg_values;
+    int row_count = 0;
   };
   std::vector<GroupResult> groups_;
   int current_group_index_ = -1;

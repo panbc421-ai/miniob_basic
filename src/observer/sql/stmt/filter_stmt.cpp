@@ -597,9 +597,9 @@ if (comp < EQUAL_TO || comp >= NO_OP) {
           rc = SelectStmt::create(db, *sq->select_node(), inner_stmt, outer_table_map, detect_col_ptr);
         }
         if (rc != RC::SUCCESS) {
-          is_correlated = true;
-          inner_stmt = nullptr;
-          rc = RC::SUCCESS;
+          delete left_e;
+          delete right_e;
+          return rc;
         } else if (inner_stmt != nullptr) {
           auto *inner_sel = static_cast<SelectStmt *>(inner_stmt);
           if (filter_stmt_has_correlated(inner_sel->filter_stmt())) {

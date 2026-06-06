@@ -291,9 +291,7 @@ AggregationExpr::AggregationExpr(AggregationType agg_type, const std::string &ta
 
 RC AggregationExpr::get_value(const Tuple &tuple, Value &value) const
 {
-  // AggregationExpr must be resolved to a FieldExpr before evaluation
-  LOG_WARN("AggregationExpr::get_value called before resolution");
-  return RC::INTERNAL;
+  return tuple.find_cell(TupleCellSpec(name().c_str()), value);
 }
 
 CastExpr::CastExpr(unique_ptr<Expression> child, AttrType cast_type)

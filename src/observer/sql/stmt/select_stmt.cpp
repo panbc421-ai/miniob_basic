@@ -444,8 +444,8 @@ RC SelectStmt::create(Db *db, const SelectSqlNode &select_sql, Stmt *&stmt,
       static_cast<int>(select_sql.conditions.size()),
       filter_stmt,
       outer_table_map,
-      outer_column_aliases,
-      &column_aliases);
+      nullptr,
+      nullptr);
   if (rc != RC::SUCCESS) {
     LOG_WARN("cannot construct filter stmt");
     return rc;
