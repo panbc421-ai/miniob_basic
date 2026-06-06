@@ -69,6 +69,30 @@ static const char *skip_spaces(const char *p)
   return p;
 }
 
+static std::vector<std::string> split_identifier_list(const std::string &text)
+{
+  std::vector<std::string> names;
+  size_t start = 0;
+  while (start < text.size()) {
+    while (start < text.size() && isspace((unsigned char)text[start])) {
+      start++;
+    }
+    size_t end = start;
+    while (end < text.size() && text[end] != ',') {
+      end++;
+    }
+    size_t trim_end = end;
+    while (trim_end > start && isspace((unsigned char)text[trim_end - 1])) {
+      trim_end--;
+    }
+    if (trim_end > start) {
+      names.emplace_back(text.substr(start, trim_end - start));
+    }
+    start = end + 1;
+  }
+  return names;
+}
+
 // Support CREATE TABLE t(col defs...) SELECT ... without touching the generated
 // parser tables. The table-definition part and the SELECT part are both parsed
 // by the normal parser, then merged into one CREATE_TABLE node.
@@ -131,6 +155,77 @@ static bool parse_create_table_select(const char *sql, ParsedSqlResult *sql_resu
   return true;
 }
 
+static bool parse_create_view_with_columns(const char *sql, ParsedSqlResult *sql_result)
+{
+  const char *p = skip_spaces(sql);
+  if (strncasecmp(p, "create", 6) != 0) {
+    return false;
+  }
+  p = skip_spaces(p + 6);
+  if (strncasecmp(p, "view", 4) != 0) {
+    return false;
+  }
+  p = skip_spaces(p + 4);
+
+  const char *name_start = p;
+  while (*p && !isspace((unsigned char)*p) && *p != '(') {
+    p++;
+  }
+  if (p == name_start) {
+    return false;
+  }
+  std::string view_name(name_start, p - name_start);
+
+  p = skip_spaces(p);
+  if (*p != '(') {
+    return false;
+  }
+  const char *open = p;
+  int depth = 1;
+  const char *close = open + 1;
+  while (*close && depth > 0) {
+    if (*close == '(') {
+      depth++;
+    } else if (*close == ')') {
+      depth--;
+    }
+    close++;
+  }
+  if (depth != 0) {
+    return false;
+  }
+
+  const char *column_start = open + 1;
+  const char *column_end = close - 1;
+  std::vector<std::string> column_names =
+      split_identifier_list(std::string(column_start, column_end - column_start));
+  if (column_names.empty()) {
+    return false;
+  }
+
+  p = skip_spaces(close);
+  if (strncasecmp(p, "as", 2) != 0) {
+    return false;
+  }
+  p = skip_spaces(p + 2);
+  if (strncasecmp(p, "select", 6) != 0) {
+    return false;
+  }
+
+  ParsedSqlResult select_result;
+  sql_parse(p, &select_result);
+  if (select_result.sql_nodes().size() != 1 || select_result.sql_nodes().front()->flag != SCF_SELECT) {
+    return false;
+  }
+
+  std::unique_ptr<ParsedSqlNode> node(new ParsedSqlNode(SCF_CREATE_VIEW));
+  node->create_view.view_name = view_name;
+  node->create_view.column_names = std::move(column_names);
+  node->create_view.select_sql = std::move(select_result.sql_nodes().front()->selection);
+  sql_result->add_sql_node(std::move(node));
+  return true;
+}
+
 int sql_parse(const char *st, ParsedSqlResult *sql_result);
 
 // 无 FROM 的纯标量 SELECT（如 select length('a') len1, length('b') len2）
@@ -178,6 +273,9 @@ static void try_convert_scalar_select_to_calc(ParsedSqlResult *sql_result)
 RC parse(const char *st, ParsedSqlResult *sql_result)
 {
   if (parse_create_table_select(st, sql_result)) {
+    return RC::SUCCESS;
+  }
+  if (parse_create_view_with_columns(st, sql_result)) {
     return RC::SUCCESS;
   }
 

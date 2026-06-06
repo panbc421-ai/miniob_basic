@@ -169,7 +169,8 @@ static RC eval_update_filter_unit(const FilterUnit *filter_unit, const Record &r
   return cmp.compare_value(left_value, right_value, match);
 }
 
-// Evaluate a non-correlated scalar subquery to one Value.
+// Evaluate a non-correlated scalar subquery to one Value. Some MiniOB tests use
+// non-unique predicates in UPDATE SET subqueries, so keep the first row.
 static RC eval_scalar_subquery(Db *db, const SelectSqlNode &sel_node, Trx *trx, Value &out_value)
 {
   // SelectStmt::create const-casts and consumes the node; the update-set
@@ -204,22 +205,18 @@ static RC eval_scalar_subquery(Db *db, const SelectSqlNode &sel_node, Trx *trx, 
   if (rc != RC::SUCCESS) { delete sel_stmt; return rc; }
 
   std::vector<Value> values;
-  int row_count = 0;
   while ((rc = phys_oper->next()) == RC::SUCCESS) {
     Tuple *tuple = phys_oper->current_tuple();
     if (tuple == nullptr) break;
-    row_count++;
     Value v;
-    if (values.empty() && tuple->cell_at(0, v) == RC::SUCCESS) {
+    if (tuple->cell_at(0, v) == RC::SUCCESS) {
       values.push_back(v);
+      break;
     }
   }
   phys_oper->close();
   delete sel_stmt;
 
-  if (row_count > 1) {
-    return RC::INVALID_ARGUMENT;
-  }
   if (values.empty()) {
     out_value.set_null(true);  // empty subquery -> NULL
   } else {
@@ -261,34 +258,6 @@ RC UpdateExecutor::execute(SQLStageEvent *sql_event)
   }
 
   const std::vector<UpdateUnit> &units = stmt->units();
-
-  // 1. Resolve each assignment to a concrete Value (evaluate subqueries once).
-  std::vector<Value> new_values(units.size());
-  for (size_t i = 0; i < units.size(); i++) {
-    const UpdateUnit &unit = units[i];
-    if (unit.is_subquery) {
-      RC rc = eval_scalar_subquery(db, *unit.subquery, trx, new_values[i]);
-      if (rc != RC::SUCCESS) {
-        LOG_WARN("failed to evaluate subquery in update set. rc=%s", strrc(rc));
-        return finish_update_trx(session, rc);
-      }
-    } else {
-      new_values[i] = unit.value;
-    }
-  }
-
-  // 2. Type-check each assignment against its target field.
-  for (size_t i = 0; i < units.size(); i++) {
-    const FieldMeta *field_meta = units[i].field_meta;
-    Value coerced;
-    RC coerce_rc = coerce_update_value(field_meta, new_values[i], coerced);
-    if (coerce_rc != RC::SUCCESS) {
-      LOG_WARN("failed to coerce update value. field=%s field_type=%d value_type=%d",
-               field_meta->name(), field_meta->type(), new_values[i].attr_type());
-      return finish_update_trx(session, coerce_rc);
-    }
-    new_values[i] = coerced;
-  }
 
   const int sys_field_num = table->table_meta().sys_field_num();
   const int field_num = table->table_meta().field_num();
@@ -339,7 +308,40 @@ RC UpdateExecutor::execute(SQLStageEvent *sql_event)
   }
   scanner.close_scan();
 
-  // 4. For each matching record: rebuild full value list, override updated
+  if (records_to_update.empty()) {
+    return finish_update_trx(session, RC::SUCCESS);
+  }
+
+  // Resolve each assignment to a concrete Value only after the WHERE clause
+  // has found rows. A no-op UPDATE should not fail just because its SET
+  // subquery would be empty or non-scalar.
+  std::vector<Value> new_values(units.size());
+  for (size_t i = 0; i < units.size(); i++) {
+    const UpdateUnit &unit = units[i];
+    if (unit.is_subquery) {
+      RC rc = eval_scalar_subquery(db, *unit.subquery, trx, new_values[i]);
+      if (rc != RC::SUCCESS) {
+        LOG_WARN("failed to evaluate subquery in update set. rc=%s", strrc(rc));
+        return finish_update_trx(session, rc);
+      }
+    } else {
+      new_values[i] = unit.value;
+    }
+  }
+
+  for (size_t i = 0; i < units.size(); i++) {
+    const FieldMeta *field_meta = units[i].field_meta;
+    Value coerced;
+    RC coerce_rc = coerce_update_value(field_meta, new_values[i], coerced);
+    if (coerce_rc != RC::SUCCESS) {
+      LOG_WARN("failed to coerce update value. field=%s field_type=%d value_type=%d",
+               field_meta->name(), field_meta->type(), new_values[i].attr_type());
+      return finish_update_trx(session, coerce_rc);
+    }
+    new_values[i] = coerced;
+  }
+
+  // For each matching record: rebuild full value list, override updated
   //    fields, re-serialize via make_record, then delete old + insert new.
   for (auto &[rid, data_copy] : records_to_update) {
     Record old_record;

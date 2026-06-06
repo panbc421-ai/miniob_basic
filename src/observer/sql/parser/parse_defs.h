@@ -257,8 +257,9 @@ struct CreateTableSqlNode
 
 struct CreateViewSqlNode
 {
-  std::string   view_name;
-  SelectSqlNode select_sql;
+  std::string              view_name;
+  std::vector<std::string> column_names;
+  SelectSqlNode            select_sql;
 };
 
 /**

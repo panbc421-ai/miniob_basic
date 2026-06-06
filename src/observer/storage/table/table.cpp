@@ -376,6 +376,11 @@ RC Table::make_record(int value_num, const Value *values, Record &record)
       // Skip type check for NULL values on nullable columns
       continue;
     }
+    if (field->type() == TEXTS && value.get_string().size() + 1 > static_cast<size_t>(field->len())) {
+      LOG_ERROR("Text value is too long. table name=%s, field name=%s, len=%d, given=%d",
+                table_meta_.name(), field->name(), field->len(), static_cast<int>(value.get_string().size()));
+      return RC::SCHEMA_FIELD_TYPE_MISMATCH;
+    }
     // Allow CHARS/TEXTS interchangeability (both are string types)
     bool type_compatible = (field->type() == value.attr_type()) ||
         (field->type() == TEXTS && value.attr_type() == CHARS) ||
@@ -400,15 +405,6 @@ RC Table::make_record(int value_num, const Value *values, Record &record)
       continue;
     }
     size_t copy_len = field->len();
-    if (field->type() == TEXTS) {
-      std::string text = value.get_string();
-      if (text.size() + 1 > static_cast<size_t>(field->len())) {
-        const std::string key = store_text_value(text);
-        copy_len = std::min(static_cast<size_t>(field->len()), key.size() + 1);
-        memcpy(record_data + field->offset(), key.data(), copy_len);
-        continue;
-      }
-    }
     if (field->type() == CHARS || field->type() == TEXTS) {
       const size_t data_len = value.length();
       if (copy_len > data_len) {

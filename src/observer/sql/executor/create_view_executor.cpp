@@ -24,7 +24,7 @@ RC CreateViewExecutor::execute(SQLStageEvent *sql_event)
 {
   CreateViewStmt *stmt = static_cast<CreateViewStmt *>(sql_event->stmt());
   Session *session = sql_event->session_event()->session();
-  if (is_simple_star_view(stmt->select_sql())) {
+  if (stmt->column_names().empty() && is_simple_star_view(stmt->select_sql())) {
     return session->get_current_db()->create_view_alias(
         stmt->view_name().c_str(), stmt->select_sql().relations.front().c_str());
   }
@@ -32,5 +32,6 @@ RC CreateViewExecutor::execute(SQLStageEvent *sql_event)
   const bool auto_commit = !session->is_trx_multi_operation_mode();
   return materialize_select_as_table(session->get_current_db(),
       session->current_trx(), auto_commit,
-      stmt->view_name().c_str(), stmt->select_sql());
+      stmt->view_name().c_str(), stmt->select_sql(),
+      nullptr, stmt->column_names().empty() ? nullptr : &stmt->column_names());
 }

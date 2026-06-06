@@ -13,55 +13,14 @@ See the Mulan PSL v2 for more details. */
 //
 
 #include <sstream>
-#include <atomic>
 #include "sql/parser/value.h"
 #include "storage/field/field.h"
 #include "common/log/log.h"
 #include "common/lang/comparator.h"
 #include "common/lang/string.h"
 #include <cstring>
-#include <mutex>
-#include <unordered_map>
 
 const char *ATTR_TYPE_NAME[] = {"undefined", "chars", "ints", "floats", "dates", "booleans", "texts", "nulls"};
-
-static const char *TEXT_REF_PREFIX = "__miniob_text_ref__:";
-static std::atomic<uint64_t> g_next_text_id{1};
-static std::mutex g_text_store_mutex;
-static std::unordered_map<std::string, std::string> g_text_store;
-
-std::string store_text_value(const std::string &text)
-{
-  std::string key = std::string(TEXT_REF_PREFIX) + std::to_string(g_next_text_id.fetch_add(1));
-  std::lock_guard<std::mutex> lock(g_text_store_mutex);
-  g_text_store[key] = text;
-  return key;
-}
-
-bool load_text_value(const char *data, int length, std::string &text)
-{
-  if (data == nullptr || length <= 0) {
-    return false;
-  }
-
-  const size_t key_len = strnlen(data, length);
-  if (key_len == 0) {
-    return false;
-  }
-
-  std::string key(data, key_len);
-  if (key.rfind(TEXT_REF_PREFIX, 0) != 0) {
-    return false;
-  }
-
-  std::lock_guard<std::mutex> lock(g_text_store_mutex);
-  auto iter = g_text_store.find(key);
-  if (iter == g_text_store.end()) {
-    return false;
-  }
-  text = iter->second;
-  return true;
-}
 
 const char *attr_type_to_string(AttrType type)
 {
