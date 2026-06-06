@@ -204,18 +204,22 @@ static RC eval_scalar_subquery(Db *db, const SelectSqlNode &sel_node, Trx *trx, 
   if (rc != RC::SUCCESS) { delete sel_stmt; return rc; }
 
   std::vector<Value> values;
+  int row_count = 0;
   while ((rc = phys_oper->next()) == RC::SUCCESS) {
     Tuple *tuple = phys_oper->current_tuple();
     if (tuple == nullptr) break;
+    row_count++;
     Value v;
-    if (tuple->cell_at(0, v) == RC::SUCCESS) {
+    if (values.empty() && tuple->cell_at(0, v) == RC::SUCCESS) {
       values.push_back(v);
-      break;
     }
   }
   phys_oper->close();
   delete sel_stmt;
 
+  if (row_count > 1) {
+    return RC::INVALID_ARGUMENT;
+  }
   if (values.empty()) {
     out_value.set_null(true);  // empty subquery -> NULL
   } else {

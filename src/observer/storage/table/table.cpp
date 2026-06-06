@@ -29,6 +29,31 @@ See the Mulan PSL v2 for more details. */
 #include "storage/index/bplus_tree_index.h"
 #include "storage/trx/trx.h"
 
+static bool field_data_is_null(const char *record, const FieldMeta *field)
+{
+  if (record == nullptr || field == nullptr || !field->nullable()) {
+    return false;
+  }
+  const char *field_data = record + field->offset();
+  for (int i = 0; i < field->len(); i++) {
+    if (field_data[i] != 0) {
+      return false;
+    }
+  }
+  return true;
+}
+
+static bool index_key_has_null(const TableMeta &table_meta, const IndexMeta &index_meta, const char *record)
+{
+  for (const std::string &field_name : index_meta.field_names()) {
+    const FieldMeta *field = table_meta.field(field_name.c_str());
+    if (field_data_is_null(record, field)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 Table::~Table()
 {
   if (record_handler_ != nullptr) {
@@ -220,6 +245,9 @@ RC Table::insert_record(Record &record)
   // 检查唯一索引约束
   for (Index *index : indexes_) {
     if (index->index_meta().is_unique()) {
+      if (index_key_has_null(table_meta_, index->index_meta(), record.data())) {
+        continue;
+      }
       std::vector<char> key(index->key_length());
       index->build_record_key(record.data(), key.data());
       IndexScanner *scanner = index->create_scanner(key.data(), index->key_length(), true, key.data(), index->key_length(), true);
@@ -452,6 +480,15 @@ RC Table::create_index(Trx *trx, const std::vector<const FieldMeta *> &field_met
     }
     // 对于唯一索引，检查是否已存在相同键值
     if (is_unique) {
+      if (index_key_has_null(table_meta_, new_index_meta, record.data())) {
+        rc = index->insert_entry(record.data(), &record.rid());
+        if (rc != RC::SUCCESS) {
+          LOG_WARN("failed to insert nullable record into index while creating index. table=%s, index=%s, rc=%s",
+                   name(), index_name, strrc(rc));
+          return rc;
+        }
+        continue;
+      }
       std::vector<char> key(index->key_length());
       index->build_record_key(record.data(), key.data());
       IndexScanner *key_scanner = index->create_scanner(
