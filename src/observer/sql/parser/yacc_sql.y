@@ -111,6 +111,8 @@ ArithmeticExpr *create_arithmetic_expression(ArithmeticExpr::Type type,
         FROM
         WHERE
         AND
+        OR
+        VIEW
         LIKE
         NOT
         SET
@@ -198,6 +200,7 @@ ArithmeticExpr *create_arithmetic_expression(ArithmeticExpr::Type type,
 %type <sql_node>            update_stmt
 %type <sql_node>            delete_stmt
 %type <sql_node>            create_table_stmt
+%type <sql_node>            create_view_stmt
 %type <sql_node>            drop_table_stmt
 %type <sql_node>            show_tables_stmt
 %type <sql_node>            desc_table_stmt
@@ -250,6 +253,7 @@ command_wrapper:
   | update_stmt
   | delete_stmt
   | create_table_stmt
+  | create_view_stmt
   | drop_table_stmt
   | show_tables_stmt
   | desc_table_stmt
@@ -385,6 +389,27 @@ create_table_stmt:    /*create table 语句的语法解析树*/
       }
       create_table.attr_infos.emplace_back(*$5);
       std::reverse(create_table.attr_infos.begin(), create_table.attr_infos.end());
+      delete $5;
+    }
+    | CREATE TABLE ID AS select_stmt
+    {
+      $$ = new ParsedSqlNode(SCF_CREATE_TABLE);
+      CreateTableSqlNode &create_table = $$->create_table;
+      create_table.relation_name = $3;
+      create_table.is_ctas = true;
+      create_table.select_sql = new SelectSqlNode(std::move($5->selection));
+      free($3);
+      delete $5;
+    }
+    ;
+
+create_view_stmt:
+    CREATE VIEW ID AS select_stmt
+    {
+      $$ = new ParsedSqlNode(SCF_CREATE_VIEW);
+      $$->create_view.view_name = $3;
+      $$->create_view.select_sql = std::move($5->selection);
+      free($3);
       delete $5;
     }
     ;
@@ -1135,6 +1160,18 @@ condition_list:
       $$ = $3;
       $$->emplace_back(std::move(*$1));
       delete $1;
+    }
+    | condition OR condition_list {
+      $$ = $3;
+      if ($$ == nullptr) {
+        $$ = new std::vector<ConditionSqlNode>;
+      }
+      ConditionSqlNode node = std::move(*$1);
+      delete $1;
+      if (!$$->empty()) {
+        (*$$)[0].connect_or = true;
+      }
+      $$->insert($$->begin(), std::move(node));
     }
     ;
 condition:

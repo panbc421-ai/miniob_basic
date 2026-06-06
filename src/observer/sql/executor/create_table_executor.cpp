@@ -13,6 +13,7 @@ See the Mulan PSL v2 for more details. */
 //
 
 #include "sql/executor/create_table_executor.h"
+#include "sql/executor/materialize_select.h"
 
 #include "session/session.h"
 #include "common/log/log.h"
@@ -30,6 +31,13 @@ RC CreateTableExecutor::execute(SQLStageEvent *sql_event)
          "create table executor can not run this command: %d", static_cast<int>(stmt->type()));
 
   CreateTableStmt *create_table_stmt = static_cast<CreateTableStmt *>(stmt);
+
+  if (create_table_stmt->is_ctas()) {
+    const bool auto_commit = !session->is_trx_multi_operation_mode();
+    return materialize_select_as_table(session->get_current_db(),
+        session->current_trx(), auto_commit,
+        create_table_stmt->table_name().c_str(), create_table_stmt->select_sql());
+  }
 
   const int attribute_count = static_cast<int>(create_table_stmt->attr_infos().size());
 

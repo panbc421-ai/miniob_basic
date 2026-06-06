@@ -16,6 +16,7 @@ See the Mulan PSL v2 for more details. */
 
 #include <string>
 #include <vector>
+#include <utility>
 
 #include "sql/stmt/stmt.h"
 
@@ -33,16 +34,25 @@ public:
         : table_name_(table_name),
           attr_infos_(attr_infos)
   {}
+  CreateTableStmt(const std::string &table_name, SelectSqlNode &&select_sql)
+        : table_name_(table_name),
+          is_ctas_(true),
+          select_sql_(std::move(select_sql))
+  {}
   virtual ~CreateTableStmt() = default;
 
   StmtType type() const override { return StmtType::CREATE_TABLE; }
 
   const std::string &table_name() const { return table_name_; }
   const std::vector<AttrInfoSqlNode> &attr_infos() const { return attr_infos_; }
+  bool is_ctas() const { return is_ctas_; }
+  SelectSqlNode &select_sql() { return select_sql_; }
 
-  static RC create(Db *db, const CreateTableSqlNode &create_table, Stmt *&stmt);
+  static RC create(Db *db, CreateTableSqlNode &create_table, Stmt *&stmt);
 
 private:
   std::string table_name_;
   std::vector<AttrInfoSqlNode> attr_infos_;
+  bool is_ctas_ = false;
+  SelectSqlNode select_sql_;
 };

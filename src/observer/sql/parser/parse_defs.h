@@ -90,9 +90,10 @@ struct ConditionSqlNode
   RelAttrSqlNode  right_attr;      ///< right-hand side attribute if right_is_attr = TRUE 右边的属性
   Value           right_value;     ///< right-hand side value if right_is_attr = FALSE
 
-  // 表达式路径: 当非空时，直接使用表达式树，忽略 left_is_attr 等字段
+  // Expression path: when set, ignore legacy left/right attr-value fields.
   Expression     *left_expr = nullptr;
   Expression     *right_expr = nullptr;
+  bool            connect_or = false;  ///< true if this condition is connected to the previous one by OR
 
   ConditionSqlNode() = default;
   ConditionSqlNode(ConditionSqlNode &&other) noexcept
@@ -100,7 +101,8 @@ struct ConditionSqlNode
         left_attr(std::move(other.left_attr)), comp(other.comp),
         right_is_attr(other.right_is_attr), right_attr(std::move(other.right_attr)),
         right_value(std::move(other.right_value)),
-        left_expr(other.left_expr), right_expr(other.right_expr)
+        left_expr(other.left_expr), right_expr(other.right_expr),
+        connect_or(other.connect_or)
   {
     other.left_expr = nullptr;
     other.right_expr = nullptr;
@@ -249,6 +251,14 @@ struct CreateTableSqlNode
 {
   std::string                  relation_name;         ///< Relation name
   std::vector<AttrInfoSqlNode> attr_infos;            ///< attributes
+  bool                         is_ctas = false;       ///< CREATE TABLE ... AS SELECT
+  SelectSqlNode               *select_sql = nullptr;  ///< CTAS SELECT; owned by ParsedSqlNode
+};
+
+struct CreateViewSqlNode
+{
+  std::string   view_name;
+  SelectSqlNode select_sql;
 };
 
 /**
@@ -356,6 +366,7 @@ enum SqlCommandFlag
   SCF_UPDATE,
   SCF_DELETE,
   SCF_CREATE_TABLE,
+  SCF_CREATE_VIEW,
   SCF_DROP_TABLE,
   SCF_CREATE_INDEX,
   SCF_DROP_INDEX,
@@ -387,6 +398,7 @@ public:
   DeleteSqlNode             deletion;
   UpdateSqlNode             update;
   CreateTableSqlNode        create_table;
+  CreateViewSqlNode         create_view;
   DropTableSqlNode          drop_table;
   CreateIndexSqlNode        create_index;
   DropIndexSqlNode          drop_index;

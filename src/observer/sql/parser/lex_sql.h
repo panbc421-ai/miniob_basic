@@ -84,7 +84,7 @@ while (0);
 #if defined (__STDC_VERSION__) && __STDC_VERSION__ >= 199901L
 
 /* C99 says to define __STDC_LIMIT_MACROS before including stdint.h,
- * if you want the limit (max/min) macros for int types. 
+ * if you want the limit (max/min) macros for int types.
  */
 #ifndef __STDC_LIMIT_MACROS
 #define __STDC_LIMIT_MACROS 1
@@ -101,7 +101,7 @@ typedef uint32_t flex_uint32_t;
 typedef signed char flex_int8_t;
 typedef short int flex_int16_t;
 typedef int flex_int32_t;
-typedef unsigned char flex_uint8_t; 
+typedef unsigned char flex_uint8_t;
 typedef unsigned short int flex_uint16_t;
 typedef unsigned int flex_uint32_t;
 
@@ -327,9 +327,9 @@ YYSTYPE * yyget_lval ( yyscan_t yyscanner );
 void yyset_lval ( YYSTYPE * yylval_param , yyscan_t yyscanner );
 
        YYLTYPE *yyget_lloc ( yyscan_t yyscanner );
-    
+
         void yyset_lloc ( YYLTYPE * yylloc_param , yyscan_t yyscanner );
-    
+
 /* Macros after this point can all be overridden by user definitions in
  * section 1.
  */
@@ -541,7 +541,7 @@ extern int yylex \
 #undef yyTABLES_NAME
 #endif
 
-#line 160 "lex_sql.l"
+#line 162 "lex_sql.l"
 
 
 #line 548 "lex_sql.h"

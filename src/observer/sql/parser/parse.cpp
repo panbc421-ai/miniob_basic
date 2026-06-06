@@ -156,6 +156,7 @@ ConditionSqlNode &ConditionSqlNode::operator=(ConditionSqlNode &&other) noexcept
     right_is_attr = other.right_is_attr; right_attr = std::move(other.right_attr);
     right_value = std::move(other.right_value);
     left_expr = other.left_expr; right_expr = other.right_expr;
+    connect_or = other.connect_or;
     other.left_expr = nullptr; other.right_expr = nullptr;
   }
   return *this;
