@@ -17,11 +17,7 @@ See the Mulan PSL v2 for more details. */
 
 RC CreateTableStmt::create(Db *db, const CreateTableSqlNode &create_table, Stmt *&stmt)
 {
-  CreateTableStmt *create_table_stmt = new CreateTableStmt(create_table.relation_name, create_table.attr_infos);
-  if (create_table.select != nullptr) {
-    create_table_stmt->select_sql_ = create_table.select.get();
-  }
-  stmt = create_table_stmt;
+  stmt = new CreateTableStmt(create_table.relation_name, create_table.attr_infos);
   sql_debug("create table statement: table name %s", create_table.relation_name.c_str());
   return RC::SUCCESS;
 }

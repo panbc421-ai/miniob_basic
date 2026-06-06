@@ -20,7 +20,6 @@ See the Mulan PSL v2 for more details. */
 #include "sql/stmt/stmt.h"
 
 class Db;
-struct SelectSqlNode;
 
 /**
  * @brief 表示创建表的语句
@@ -40,13 +39,10 @@ public:
 
   const std::string &table_name() const { return table_name_; }
   const std::vector<AttrInfoSqlNode> &attr_infos() const { return attr_infos_; }
-  const SelectSqlNode *select_sql() const { return select_sql_; }
-  bool has_select() const { return select_sql_ != nullptr; }
 
   static RC create(Db *db, const CreateTableSqlNode &create_table, Stmt *&stmt);
 
 private:
   std::string table_name_;
   std::vector<AttrInfoSqlNode> attr_infos_;
-  const SelectSqlNode *select_sql_ = nullptr;
 };
