@@ -10,6 +10,7 @@
 #include "storage/table/table.h"
 #include "storage/record/record_manager.h"
 #include "storage/db/db.h"
+#include "storage/trx/trx.h"
 #include "common/log/log.h"
 #include "session/session.h"
 #include "sql/expr/tuple.h"
@@ -232,6 +233,11 @@ RC UpdateExecutor::execute(SQLStageEvent *sql_event)
   FilterStmt *filter_stmt = stmt->filter_stmt();
   Trx *trx = sql_event->session_event()->session()->current_trx();
   Db *db = sql_event->session_event()->session()->get_current_db();
+  RC rc = trx->start_if_need();
+  if (rc != RC::SUCCESS) {
+    LOG_WARN("failed to start transaction for update. rc=%s", strrc(rc));
+    return rc;
+  }
 
   const std::vector<UpdateUnit> &units = stmt->units();
 
@@ -281,7 +287,7 @@ RC UpdateExecutor::execute(SQLStageEvent *sql_event)
 
   // 3. Scan and collect matching records (snapshot before mutation).
   RecordFileScanner scanner;
-  RC rc = table->get_record_scanner(scanner, trx, false);
+  rc = table->get_record_scanner(scanner, trx, false);
   if (rc != RC::SUCCESS) {
     LOG_WARN("failed to get record scanner. rc=%s", strrc(rc));
     return rc;
