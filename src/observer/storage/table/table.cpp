@@ -15,6 +15,7 @@ See the Mulan PSL v2 for more details. */
 #include <limits.h>
 #include <string.h>
 #include <algorithm>
+#include <cmath>
 #include <string>
 
 #include "common/defs.h"
@@ -382,10 +383,11 @@ RC Table::make_record(int value_num, const Value *values, Record &record, const 
       // Skip type check for NULL values on nullable columns
       continue;
     }
-    // Allow CHARS/TEXTS interchangeability (both are string types)
+    // Allow CHARS/TEXTS interchangeability and numeric assignment coercion.
     bool type_compatible = (field->type() == value.attr_type()) ||
         (field->type() == TEXTS && value.attr_type() == CHARS) ||
-        (field->type() == CHARS && value.attr_type() == TEXTS);
+        (field->type() == CHARS && value.attr_type() == TEXTS) ||
+        (field->type() == INTS && value.attr_type() == FLOATS);
     if (!type_compatible && value.attr_type() != NULLS) {
       LOG_ERROR("Invalid value type. table name =%s, field name=%s, type=%d, but given=%d",
                 table_meta_.name(), field->name(), field->type(), value.attr_type());
@@ -407,6 +409,11 @@ RC Table::make_record(int value_num, const Value *values, Record &record, const 
       continue;
     }
     size_t copy_len = field->len();
+    if (field->type() == INTS && value.attr_type() == FLOATS) {
+      int int_value = static_cast<int>(std::lround(value.get_double()));
+      memcpy(record_data + field->offset(), &int_value, sizeof(int_value));
+      continue;
+    }
     if (field->type() == CHARS || field->type() == TEXTS) {
       const size_t data_len = value.length();
       copy_len = std::min(copy_len, data_len);
