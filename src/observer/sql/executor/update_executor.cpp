@@ -512,17 +512,8 @@ RC UpdateExecutor::execute(SQLStageEvent *sql_event)
       if (is_null) {
         values[idx].set_null(true);
       } else {
-        const char *field_data = data_copy.data() + fm->offset();
-        if (fm->type() == TEXTS) {
-          std::string text;
-          if (table->resolve_overflow_text(field_data, fm->len(), text)) {
-            values[idx].set_string(text.c_str(), static_cast<int>(text.size()));
-            values[idx].set_type(TEXTS);
-            continue;
-          }
-        }
         values[idx].set_type(fm->type());
-        values[idx].set_data(field_data, fm->len());
+        values[idx].set_data(data_copy.data() + fm->offset(), fm->len());
       }
     }
 
