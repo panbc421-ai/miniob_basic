@@ -32,6 +32,29 @@ See the Mulan PSL v2 for more details. */
 #include "storage/index/bplus_tree_index.h"
 #include "storage/trx/trx.h"
 
+static const char *TEXT_OVERFLOW_PREFIX = "\x01MINIOB_TEXT:";
+
+static bool text_overflow_marker(const char *field_data, int field_len, std::string &marker)
+{
+  if (field_data == nullptr || field_len <= 0) {
+    return false;
+  }
+
+  const size_t prefix_len = strlen(TEXT_OVERFLOW_PREFIX);
+  if (static_cast<size_t>(field_len) <= prefix_len ||
+      memcmp(field_data, TEXT_OVERFLOW_PREFIX, prefix_len) != 0) {
+    return false;
+  }
+
+  const size_t marker_len = strnlen(field_data, field_len);
+  if (marker_len <= prefix_len || marker_len >= static_cast<size_t>(field_len)) {
+    return false;
+  }
+
+  marker.assign(field_data, marker_len);
+  return true;
+}
+
 static bool field_data_is_null(const char *record, const FieldMeta *field)
 {
   if (record == nullptr || field == nullptr || !field->nullable()) {
@@ -266,6 +289,7 @@ RC Table::insert_record(Record &record)
         bool found = (scanner->next_entry(&rid) == RC::SUCCESS);
         scanner->destroy();
         if (found) {
+          erase_overflow_texts(record.data());
           return RC::RECORD_DUPLICATE_KEY;
         }
       }
@@ -275,6 +299,7 @@ RC Table::insert_record(Record &record)
   rc = record_handler_->insert_record(record.data(), table_meta_.record_size(), &record.rid());
   if (rc != RC::SUCCESS) {
     LOG_ERROR("Insert record failed. table name=%s, rc=%s", table_meta_.name(), strrc(rc));
+    erase_overflow_texts(record.data());
     return rc;
   }
 
@@ -290,6 +315,7 @@ RC Table::insert_record(Record &record)
       LOG_PANIC("Failed to rollback record data when insert index entries failed. table name=%s, rc=%d:%s",
                 name(), rc2, strrc(rc2));
     }
+    erase_overflow_texts(record.data());
   }
   return rc;
 }
@@ -416,6 +442,15 @@ RC Table::make_record(int value_num, const Value *values, Record &record, const 
     }
     if (field->type() == CHARS || field->type() == TEXTS) {
       const size_t data_len = value.length();
+      if (field->type() == TEXTS && data_len > static_cast<size_t>(field->len())) {
+        std::string marker = store_overflow_text(value.data(), static_cast<int>(data_len));
+        if (marker.size() >= static_cast<size_t>(field->len())) {
+          return RC::INTERNAL;
+        }
+        memcpy(record_data + field->offset(), marker.data(), marker.size());
+        record_data[field->offset() + marker.size()] = '\0';
+        continue;
+      }
       copy_len = std::min(copy_len, data_len);
       if (copy_len < static_cast<size_t>(field->len())) {
         memcpy(record_data + field->offset(), value.data(), copy_len);
@@ -476,6 +511,48 @@ bool Table::is_forced_null_field(const RID &rid, const FieldMeta *field) const
     return false;
   }
   return iter->second.find(field->name()) != iter->second.end();
+}
+
+std::string Table::store_overflow_text(const char *data, int len)
+{
+  std::string marker = std::string(TEXT_OVERFLOW_PREFIX) + std::to_string(next_overflow_text_id_++);
+  overflow_texts_[marker] = std::string(data, len);
+  return marker;
+}
+
+bool Table::resolve_overflow_text(const char *field_data, int field_len, std::string &text) const
+{
+  std::string marker;
+  if (!text_overflow_marker(field_data, field_len, marker)) {
+    return false;
+  }
+
+  auto iter = overflow_texts_.find(marker);
+  if (iter == overflow_texts_.end()) {
+    return false;
+  }
+
+  text = iter->second;
+  return true;
+}
+
+void Table::erase_overflow_texts(const char *record)
+{
+  if (record == nullptr) {
+    return;
+  }
+
+  for (int i = table_meta_.sys_field_num(); i < table_meta_.field_num(); i++) {
+    const FieldMeta *field = table_meta_.field(i);
+    if (field == nullptr || field->type() != TEXTS) {
+      continue;
+    }
+
+    std::string marker;
+    if (text_overflow_marker(record + field->offset(), field->len(), marker)) {
+      overflow_texts_.erase(marker);
+    }
+  }
 }
 
 RC Table::init_record_handler(const char *base_dir)
@@ -640,6 +717,7 @@ RC Table::delete_record(const Record &record)
   rc = record_handler_->delete_record(&record.rid());
   if (rc == RC::SUCCESS) {
     clear_forced_null_fields(record.rid());
+    erase_overflow_texts(record.data());
   }
   return rc;
 }

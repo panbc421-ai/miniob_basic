@@ -14,6 +14,7 @@ See the Mulan PSL v2 for more details. */
 
 #pragma once
 
+#include <cstdint>
 #include <functional>
 #include <string>
 #include <unordered_map>
@@ -88,6 +89,7 @@ public:
   void mark_forced_null_fields(const RID &rid, const char *forced_null_fields, int field_num);
   void clear_forced_null_fields(const RID &rid);
   bool is_forced_null_field(const RID &rid, const FieldMeta *field) const;
+  bool resolve_overflow_text(const char *field_data, int field_len, std::string &text) const;
 
   RC recover_insert_record(Record &record);
 
@@ -112,6 +114,8 @@ public:
 private:
   RC insert_entry_of_indexes(const char *record, const RID &rid);
   RC delete_entry_of_indexes(const char *record, const RID &rid, bool error_on_not_exists);
+  std::string store_overflow_text(const char *data, int len);
+  void erase_overflow_texts(const char *record);
 
 private:
   RC init_record_handler(const char *base_dir);
@@ -128,4 +132,6 @@ private:
   RecordFileHandler *record_handler_ = nullptr;  /// 记录操作
   std::vector<Index *> indexes_;
   std::unordered_map<std::string, std::unordered_set<std::string>> forced_null_fields_;
+  std::unordered_map<std::string, std::string> overflow_texts_;
+  uint64_t next_overflow_text_id_ = 1;
 };
