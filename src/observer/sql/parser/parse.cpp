@@ -22,6 +22,7 @@ See the Mulan PSL v2 for more details. */
 #include "sql/expr/expression.h"
 RC parse(char *st, ParsedSqlNode *sqln);
 int sql_parse(const char *st, ParsedSqlResult *sql_result);
+static bool identifier_char(char c);
 
 // Split multi-tuple INSERT like VALUES (a,b),(c,d) into individual INSERTs
 static bool split_multi_insert(const char *sql, std::vector<std::string> &out)
@@ -69,6 +70,60 @@ static const char *skip_spaces(const char *p)
   return p;
 }
 
+static bool parse_load_data_statement(const char *sql, ParsedSqlResult *sql_result)
+{
+  const char *p = skip_spaces(sql);
+  if (strncasecmp(p, "load", 4) != 0) {
+    return false;
+  }
+  p = skip_spaces(p + 4);
+  if (strncasecmp(p, "data", 4) != 0) {
+    return false;
+  }
+  p = skip_spaces(p + 4);
+  if (strncasecmp(p, "infile", 6) != 0) {
+    return false;
+  }
+  p = skip_spaces(p + 6);
+
+  if (*p != '\'' && *p != '"') {
+    return false;
+  }
+  const char quote = *p++;
+  const char *file_start = p;
+  while (*p && *p != quote) {
+    p++;
+  }
+  if (*p != quote) {
+    return false;
+  }
+  std::string file_name(file_start, p - file_start);
+  p = skip_spaces(p + 1);
+
+  if (strncasecmp(p, "into", 4) != 0) {
+    return false;
+  }
+  p = skip_spaces(p + 4);
+  if (strncasecmp(p, "table", 5) != 0) {
+    return false;
+  }
+  p = skip_spaces(p + 5);
+
+  const char *table_start = p;
+  while (*p && identifier_char(*p)) {
+    p++;
+  }
+  if (p == table_start) {
+    return false;
+  }
+
+  std::unique_ptr<ParsedSqlNode> node(new ParsedSqlNode(SCF_LOAD_DATA));
+  node->load_data.file_name = file_name;
+  node->load_data.relation_name.assign(table_start, p - table_start);
+  sql_result->add_sql_node(std::move(node));
+  return true;
+}
+
 static std::vector<std::string> split_identifier_list(const std::string &text)
 {
   std::vector<std::string> names;
@@ -91,6 +146,90 @@ static std::vector<std::string> split_identifier_list(const std::string &text)
     start = end + 1;
   }
   return names;
+}
+
+static bool identifier_char(char c)
+{
+  return std::isalnum(static_cast<unsigned char>(c)) || c == '_';
+}
+
+static bool word_at(const std::string &text, size_t pos, const char *word)
+{
+  const size_t len = strlen(word);
+  if (pos + len > text.size()) {
+    return false;
+  }
+  if (pos > 0 && identifier_char(text[pos - 1])) {
+    return false;
+  }
+  if (pos + len < text.size() && identifier_char(text[pos + len])) {
+    return false;
+  }
+  return strncasecmp(text.c_str() + pos, word, len) == 0;
+}
+
+static std::string normalize_reserved_select_aliases(const char *select_sql,
+    std::vector<std::pair<std::string, std::string>> &alias_rewrites)
+{
+  const std::string input(select_sql);
+  std::string output;
+  output.reserve(input.size());
+
+  char quote = 0;
+  for (size_t i = 0; i < input.size();) {
+    char c = input[i];
+    if (c == '\'' || c == '"') {
+      if (quote == 0) {
+        quote = c;
+      } else if (quote == c) {
+        quote = 0;
+      }
+      output.push_back(c);
+      i++;
+      continue;
+    }
+
+    if (quote == 0 && word_at(input, i, "as")) {
+      const size_t as_start = i;
+      size_t p = i + 2;
+      while (p < input.size() && std::isspace(static_cast<unsigned char>(input[p]))) {
+        p++;
+      }
+
+      if (word_at(input, p, "data")) {
+        std::string temp_alias = "__miniob_alias_data_" + std::to_string(alias_rewrites.size());
+        alias_rewrites.emplace_back(temp_alias, "data");
+        output.append(input, as_start, p - as_start);
+        output.append(temp_alias);
+        i = p + 4;
+        continue;
+      }
+    }
+
+    output.push_back(c);
+    i++;
+  }
+  return output;
+}
+
+static void restore_reserved_select_aliases(SelectSqlNode &select_sql,
+    const std::vector<std::pair<std::string, std::string>> &alias_rewrites)
+{
+  if (alias_rewrites.empty()) {
+    return;
+  }
+
+  for (SelectExprNode &expr : select_sql.expressions) {
+    for (const auto &rewrite : alias_rewrites) {
+      if (expr.alias == rewrite.first) {
+        expr.alias = rewrite.second;
+        if (expr.expr != nullptr) {
+          expr.expr->set_name(rewrite.second);
+        }
+        break;
+      }
+    }
+  }
 }
 
 // Support CREATE TABLE t(col defs...) SELECT ... without touching the generated
@@ -155,7 +294,7 @@ static bool parse_create_table_select(const char *sql, ParsedSqlResult *sql_resu
   return true;
 }
 
-static bool parse_create_view_with_columns(const char *sql, ParsedSqlResult *sql_result)
+static bool parse_create_view_statement(const char *sql, ParsedSqlResult *sql_result)
 {
   const char *p = skip_spaces(sql);
   if (strncasecmp(p, "create", 6) != 0) {
@@ -177,33 +316,32 @@ static bool parse_create_view_with_columns(const char *sql, ParsedSqlResult *sql
   std::string view_name(name_start, p - name_start);
 
   p = skip_spaces(p);
-  if (*p != '(') {
-    return false;
-  }
-  const char *open = p;
-  int depth = 1;
-  const char *close = open + 1;
-  while (*close && depth > 0) {
-    if (*close == '(') {
-      depth++;
-    } else if (*close == ')') {
-      depth--;
+  std::vector<std::string> column_names;
+  if (*p == '(') {
+    const char *open = p;
+    int depth = 1;
+    const char *close = open + 1;
+    while (*close && depth > 0) {
+      if (*close == '(') {
+        depth++;
+      } else if (*close == ')') {
+        depth--;
+      }
+      close++;
     }
-    close++;
-  }
-  if (depth != 0) {
-    return false;
+    if (depth != 0) {
+      return false;
+    }
+
+    const char *column_start = open + 1;
+    const char *column_end = close - 1;
+    column_names = split_identifier_list(std::string(column_start, column_end - column_start));
+    if (column_names.empty()) {
+      return false;
+    }
+    p = skip_spaces(close);
   }
 
-  const char *column_start = open + 1;
-  const char *column_end = close - 1;
-  std::vector<std::string> column_names =
-      split_identifier_list(std::string(column_start, column_end - column_start));
-  if (column_names.empty()) {
-    return false;
-  }
-
-  p = skip_spaces(close);
   if (strncasecmp(p, "as", 2) != 0) {
     return false;
   }
@@ -212,8 +350,11 @@ static bool parse_create_view_with_columns(const char *sql, ParsedSqlResult *sql
     return false;
   }
 
+  std::vector<std::pair<std::string, std::string>> alias_rewrites;
+  std::string normalized_select = normalize_reserved_select_aliases(p, alias_rewrites);
+
   ParsedSqlResult select_result;
-  sql_parse(p, &select_result);
+  sql_parse(normalized_select.c_str(), &select_result);
   if (select_result.sql_nodes().size() != 1 || select_result.sql_nodes().front()->flag != SCF_SELECT) {
     return false;
   }
@@ -222,6 +363,7 @@ static bool parse_create_view_with_columns(const char *sql, ParsedSqlResult *sql
   node->create_view.view_name = view_name;
   node->create_view.column_names = std::move(column_names);
   node->create_view.select_sql = std::move(select_result.sql_nodes().front()->selection);
+  restore_reserved_select_aliases(node->create_view.select_sql, alias_rewrites);
   sql_result->add_sql_node(std::move(node));
   return true;
 }
@@ -272,10 +414,13 @@ static void try_convert_scalar_select_to_calc(ParsedSqlResult *sql_result)
 
 RC parse(const char *st, ParsedSqlResult *sql_result)
 {
+  if (parse_load_data_statement(st, sql_result)) {
+    return RC::SUCCESS;
+  }
   if (parse_create_table_select(st, sql_result)) {
     return RC::SUCCESS;
   }
-  if (parse_create_view_with_columns(st, sql_result)) {
+  if (parse_create_view_statement(st, sql_result)) {
     return RC::SUCCESS;
   }
 

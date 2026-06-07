@@ -1361,7 +1361,7 @@ RETURN_TOKEN(LOAD);
 case 58:
 YY_RULE_SETUP
 #line 135 "lex_sql.l"
-RETURN_TOKEN(DATA);
+yylval->string=strdup(yytext); RETURN_TOKEN(ID);
 	YY_BREAK
 case 59:
 YY_RULE_SETUP
@@ -2638,4 +2638,3 @@ void yyfree (void * ptr , yyscan_t yyscanner)
 void scan_string(const char *str, yyscan_t scanner) {
   yy_switch_to_buffer(yy_scan_string(str, scanner), scanner);
 }
-
