@@ -547,7 +547,8 @@ RC ArithmeticExpr::calc_value(const Value &left_value, const Value &right_value,
       if (target_type == AttrType::INTS) {
         value.set_int(left_value.get_int() + right_value.get_int());
       } else {
-        value.set_float(left_value.get_float() + right_value.get_float());
+        const bool plain_format = left_value.plain_float_format() || right_value.plain_float_format();
+        value.set_float(left_value.get_double() + right_value.get_double(), plain_format);
       }
     } break;
 
@@ -555,7 +556,8 @@ RC ArithmeticExpr::calc_value(const Value &left_value, const Value &right_value,
       if (target_type == AttrType::INTS) {
         value.set_int(left_value.get_int() - right_value.get_int());
       } else {
-        value.set_float(left_value.get_float() - right_value.get_float());
+        const bool plain_format = left_value.plain_float_format() || right_value.plain_float_format();
+        value.set_float(left_value.get_double() - right_value.get_double(), plain_format);
       }
     } break;
 
@@ -563,7 +565,8 @@ RC ArithmeticExpr::calc_value(const Value &left_value, const Value &right_value,
       if (target_type == AttrType::INTS) {
         value.set_int(left_value.get_int() * right_value.get_int());
       } else {
-        value.set_float(left_value.get_float() * right_value.get_float());
+        const bool plain_format = left_value.plain_float_format() || right_value.plain_float_format();
+        value.set_float(left_value.get_double() * right_value.get_double(), plain_format);
       }
     } break;
 
@@ -575,10 +578,11 @@ RC ArithmeticExpr::calc_value(const Value &left_value, const Value &right_value,
           value.set_int(left_value.get_int() / right_value.get_int());
         }
       } else {
-        if (right_value.get_float() > -EPSILON && right_value.get_float() < EPSILON) {
+        if (right_value.get_double() > -EPSILON && right_value.get_double() < EPSILON) {
           value.set_null(true);
         } else {
-          value.set_float(left_value.get_float() / right_value.get_float());
+          const bool plain_format = left_value.plain_float_format() || right_value.plain_float_format();
+          value.set_float(left_value.get_double() / right_value.get_double(), plain_format);
         }
       }
     } break;
@@ -587,7 +591,7 @@ RC ArithmeticExpr::calc_value(const Value &left_value, const Value &right_value,
       if (target_type == AttrType::INTS) {
         value.set_int(-left_value.get_int());
       } else {
-        value.set_float(-left_value.get_float());
+        value.set_float(-left_value.get_double(), left_value.plain_float_format());
       }
     } break;
 

@@ -68,6 +68,7 @@ public:
   }
   void set_int(int val);
   void set_float(float val);
+  void set_float(double val, bool plain_format);
   void set_boolean(bool val);
   int get_date() const;
   void set_date(int val);
@@ -98,6 +99,8 @@ public:
     is_null_ = val;
     if (val) {
       attr_type_ = NULLS;
+      has_double_value_ = false;
+      plain_float_format_ = false;
     }
   }
 
@@ -108,13 +111,21 @@ public:
    */
   int get_int() const;
   float get_float() const;
+  double get_double() const;
   std::string get_string() const;
   bool get_boolean() const;
+  bool plain_float_format() const
+  {
+    return plain_float_format_;
+  }
 
 private:
   AttrType attr_type_ = UNDEFINED;
   int length_ = 0;
   bool is_null_ = false;
+  bool has_double_value_ = false;
+  bool plain_float_format_ = false;
+  double double_value_ = 0;
 
   union {
     int int_value_;

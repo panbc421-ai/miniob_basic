@@ -13,6 +13,7 @@ See the Mulan PSL v2 for more details. */
 //
 
 #include <sstream>
+#include <cmath>
 #include "sql/parser/value.h"
 #include "storage/field/field.h"
 #include "common/log/log.h"
@@ -47,6 +48,7 @@ Value::Value(int val)
 Value::Value(float val)
 {
   set_float(val);
+  plain_float_format_ = true;
 }
 
 Value::Value(bool val)
@@ -70,18 +72,26 @@ void Value::set_data(char *data, int length)
     } break;
     case INTS: {
       num_value_.int_value_ = *(int *)data;
+      has_double_value_ = false;
+      plain_float_format_ = false;
       length_ = length;
     } break;
     case FLOATS: {
       num_value_.float_value_ = *(float *)data;
+      has_double_value_ = false;
+      plain_float_format_ = true;
       length_ = length;
     } break;
     case BOOLEANS: {
       num_value_.bool_value_ = *(int *)data != 0;
+      has_double_value_ = false;
+      plain_float_format_ = false;
       length_ = length;
     } break;
     case DATES: {
   num_value_.date_value_ = *(int *)data;
+  has_double_value_ = false;
+  plain_float_format_ = false;
   length_ = length;
 } break;
     default: {
@@ -110,6 +120,8 @@ static bool check_date(int y, int m, int d)
 void Value::set_int(int val)
 {
   attr_type_ = INTS;
+  has_double_value_ = false;
+  plain_float_format_ = false;
   num_value_.int_value_ = val;
   length_ = sizeof(val);
 }
@@ -117,12 +129,25 @@ void Value::set_int(int val)
 void Value::set_float(float val)
 {
   attr_type_ = FLOATS;
+  has_double_value_ = false;
+  plain_float_format_ = false;
   num_value_.float_value_ = val;
   length_ = sizeof(val);
+}
+void Value::set_float(double val, bool plain_format)
+{
+  attr_type_ = FLOATS;
+  num_value_.float_value_ = static_cast<float>(val);
+  double_value_ = val;
+  has_double_value_ = true;
+  plain_float_format_ = plain_format;
+  length_ = sizeof(num_value_.float_value_);
 }
 void Value::set_date(int val)
 {
   attr_type_ = DATES;
+  has_double_value_ = false;
+  plain_float_format_ = false;
   num_value_.date_value_ = val;
   length_ = sizeof(val);
 }
@@ -134,12 +159,16 @@ int Value::get_date() const
 void Value::set_boolean(bool val)
 {
   attr_type_ = BOOLEANS;
+  has_double_value_ = false;
+  plain_float_format_ = false;
   num_value_.bool_value_ = val;
   length_ = sizeof(val);
 }
 void Value::set_string(const char *s, int len /*= 0*/)
 {
   attr_type_ = CHARS;
+  has_double_value_ = false;
+  plain_float_format_ = false;
   if (len > 0) {
     len = strnlen(s, len);
     str_value_.assign(s, len);
@@ -160,7 +189,7 @@ void Value::set_value(const Value &value)
       set_int(value.get_int());
     } break;
     case FLOATS: {
-      set_float(value.get_float());
+      set_float(value.get_double(), value.plain_float_format());
     } break;
     case CHARS:
     case TEXTS: {
@@ -192,6 +221,21 @@ const char *Value::data() const
   }
 }
 
+static std::string plain_double_to_str(double v)
+{
+  char buf[256];
+  snprintf(buf, sizeof(buf), "%.2f", v);
+  size_t len = strlen(buf);
+  while (len > 0 && buf[len - 1] == '0') {
+    len--;
+  }
+  if (len > 0 && buf[len - 1] == '.') {
+    len--;
+  }
+
+  return std::string(buf, len);
+}
+
 std::string Value::to_string() const
 {
   if (is_null_) {
@@ -203,7 +247,8 @@ std::string Value::to_string() const
       os << num_value_.int_value_;
     } break;
     case FLOATS: {
-      os << common::double_to_str(num_value_.float_value_);
+      double v = has_double_value_ ? double_value_ : num_value_.float_value_;
+      os << (plain_float_format_ ? plain_double_to_str(v) : common::double_to_str(v));
     } break;
     case BOOLEANS: {
       os << num_value_.bool_value_;
@@ -364,6 +409,45 @@ float Value::get_float() const
     }
   }
   return 0;
+}
+
+double Value::get_double() const
+{
+  switch (attr_type_) {
+    case CHARS:
+    case TEXTS: {
+      try {
+        return std::stod(str_value_);
+      } catch (std::exception const &ex) {
+        LOG_TRACE("failed to convert string to double. s=%s, ex=%s", str_value_.c_str(), ex.what());
+        return 0.0;
+      }
+    } break;
+    case INTS: {
+      return static_cast<double>(num_value_.int_value_);
+    } break;
+    case FLOATS: {
+      if (has_double_value_) {
+        return double_value_;
+      }
+      double v = num_value_.float_value_;
+      return plain_float_format_ ? std::round(v * 100.0) / 100.0 : v;
+    } break;
+    case DATES: {
+      return static_cast<double>(num_value_.date_value_);
+    } break;
+    case BOOLEANS: {
+      return static_cast<double>(num_value_.bool_value_);
+    } break;
+    case NULLS: {
+      return 0.0;
+    } break;
+    default: {
+      LOG_WARN("unknown data type. type=%d", attr_type_);
+      return 0.0;
+    }
+  }
+  return 0.0;
 }
 
 std::string Value::get_string() const
