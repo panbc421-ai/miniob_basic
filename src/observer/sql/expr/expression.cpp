@@ -678,7 +678,7 @@ static RC eval_function(const std::string &func_name, const std::vector<Value> &
 
   if (fn == "length") {
     if (arg_values.size() != 1) return RC::INVALID_ARGUMENT;
-    if (arg_values[0].attr_type() != CHARS) {
+    if (arg_values[0].attr_type() != CHARS && arg_values[0].attr_type() != TEXTS) {
       return RC::INVALID_ARGUMENT;
     }
     value.set_int(trimmed_char_length(arg_values[0]));

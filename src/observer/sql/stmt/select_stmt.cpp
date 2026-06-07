@@ -298,7 +298,14 @@ RC SelectStmt::create(Db *db, const SelectSqlNode &select_sql, Stmt *&stmt,
   bool ordered_projection = false;
   if (!select_sql.expressions.empty() && select_sql.group_by.empty()) {
     for (const auto &sel_expr : select_sql.expressions) {
-      if (sel_expr.expr != nullptr && sel_expr.expr->type() == ExprType::UNBOUND_FIELD) {
+      if (sel_expr.is_star || sel_expr.agg_type != AGG_NONE || sel_expr.expr == nullptr) {
+        continue;
+      }
+      if (sel_expr.expr->type() != ExprType::UNBOUND_FIELD) {
+        ordered_projection = true;
+        break;
+      }
+      if (sel_expr.expr->type() == ExprType::UNBOUND_FIELD) {
         auto *uf = static_cast<UnboundFieldExpr *>(sel_expr.expr);
         if (!sel_expr.alias.empty() && sel_expr.alias != uf->field_name()) {
           ordered_projection = true;

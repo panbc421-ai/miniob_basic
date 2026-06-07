@@ -11,6 +11,7 @@
 #include "sql/operator/sort_physical_operator.h"
 #include "sql/optimizer/logical_plan_generator.h"
 #include "sql/optimizer/physical_plan_generator.h"
+#include "sql/parser/condition_clone.h"
 #include "sql/stmt/select_stmt.h"
 #include "storage/db/db.h"
 #include "storage/table/table.h"
@@ -231,8 +232,13 @@ RC materialize_select_as_table(Db *db, Trx *trx, bool auto_commit,
     return rc;
   }
 
+  std::unique_ptr<SelectSqlNode> select_sql_copy = clone_select_sql_node(select_sql);
+  if (select_sql_copy == nullptr) {
+    return finish_trx(trx, auto_commit, RC::INVALID_ARGUMENT);
+  }
+
   Stmt *stmt = nullptr;
-  rc = SelectStmt::create(db, select_sql, stmt);
+  rc = SelectStmt::create(db, *select_sql_copy, stmt);
   if (rc != RC::SUCCESS) {
     return finish_trx(trx, auto_commit, rc);
   }
