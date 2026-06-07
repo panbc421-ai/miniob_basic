@@ -78,6 +78,16 @@ RC BufferedWriter::writen(const char *data, int32_t size)
     if (OB_FAIL(rc)) {
       return rc;
     }
+    if (tmp_write_size == 0) {
+      rc = flush();
+      if (OB_FAIL(rc)) {
+        return rc;
+      }
+      if (buffer_.remain() == 0) {
+        return RC::IOERR_WRITE;
+      }
+      continue;
+    }
 
     write_size += tmp_write_size;
   }
@@ -112,6 +122,9 @@ RC BufferedWriter::flush_internal(int32_t size)
     rc = buffer_.buffer(buf, read_size);
     if (OB_FAIL(rc)) {
       return rc;
+    }
+    if (read_size <= 0) {
+      return RC::IOERR_WRITE;
     }
 
     ssize_t tmp_write_size = 0;

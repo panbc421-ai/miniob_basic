@@ -232,16 +232,17 @@ RC CreateViewExecutor::execute(SQLStageEvent *sql_event)
 {
   CreateViewStmt *stmt = static_cast<CreateViewStmt *>(sql_event->stmt());
   Session *session = sql_event->session_event()->session();
-  const bool has_where = !stmt->select_sql().conditions.empty();
-  if (!has_where && stmt->column_names().empty() && is_aliasable_star_view(stmt->select_sql())) {
+  const std::vector<ConditionSqlNode> *conditions =
+      stmt->select_sql().conditions.empty() ? nullptr : &stmt->select_sql().conditions;
+  if (stmt->column_names().empty() && is_aliasable_star_view(stmt->select_sql())) {
     return session->get_current_db()->create_view_alias(
         stmt->view_name().c_str(), stmt->select_sql().relations.front().c_str(),
-        std::vector<std::string>(), nullptr);
+        std::vector<std::string>(), conditions);
   }
-  if (!has_where && !stmt->column_names().empty() && is_aliasable_column_view(stmt->select_sql())) {
+  if (!stmt->column_names().empty() && is_aliasable_column_view(stmt->select_sql())) {
     return session->get_current_db()->create_view_alias(
         stmt->view_name().c_str(), stmt->select_sql().relations.front().c_str(),
-        selected_base_columns(stmt->select_sql()), nullptr);
+        selected_base_columns(stmt->select_sql()), conditions);
   }
 
   const bool auto_commit = !session->is_trx_multi_operation_mode();
