@@ -98,6 +98,7 @@ RC Db::create_table(const char *table_name, int attribute_count, const AttrInfoS
   }
 
   opened_tables_[table_name] = table;
+  materialized_view_selects_.erase(table_name);
   LOG_INFO("Create table success. table name=%s, table_id:%d", table_name, table_id);
   return RC::SUCCESS;
 }
@@ -141,6 +142,7 @@ RC Db::create_view_alias(const char *view_name, const char *base_table_name,
   view_columns_[view_name] = columns;
   view_conditions_[view_name] = std::move(cloned_conditions);
   read_only_views_.erase(view_name);
+  materialized_view_selects_.erase(view_name);
   LOG_INFO("Create view alias success. view name=%s, base table=%s", view_name, base_table->name());
   return RC::SUCCESS;
 }
@@ -153,6 +155,7 @@ RC Db::drop_table(const char *table_name)
     view_columns_.erase(table_name);
     view_conditions_.erase(table_name);
     read_only_views_.erase(table_name);
+    materialized_view_selects_.erase(table_name);
     LOG_INFO("Drop view alias success. view name=%s", table_name);
     return RC::SUCCESS;
   }
@@ -170,6 +173,7 @@ RC Db::drop_table(const char *table_name)
   // 从内存中删除表
   opened_tables_.erase(iter);
   read_only_views_.erase(table_name);
+  materialized_view_selects_.erase(table_name);
 
   // 删除表的文件
   RC rc = table->destroy(path_.c_str());
@@ -185,6 +189,7 @@ RC Db::drop_table(const char *table_name)
       view_columns_.erase(alias_iter->first);
       view_conditions_.erase(alias_iter->first);
       read_only_views_.erase(alias_iter->first);
+      materialized_view_selects_.erase(alias_iter->first);
       alias_iter = view_aliases_.erase(alias_iter);
     } else {
       ++alias_iter;
@@ -250,6 +255,36 @@ bool Db::is_readonly_view(const char *view_name) const
     return false;
   }
   return read_only_views_.find(view_name) != read_only_views_.end();
+}
+
+RC Db::register_materialized_view(const char *view_name, const SelectSqlNode &select_sql)
+{
+  if (common::is_blank(view_name)) {
+    return RC::INVALID_ARGUMENT;
+  }
+  std::unique_ptr<SelectSqlNode> select_copy = clone_select_sql_node(select_sql);
+  if (select_copy == nullptr) {
+    return RC::INVALID_ARGUMENT;
+  }
+  materialized_view_selects_[view_name] = std::move(select_copy);
+  return RC::SUCCESS;
+}
+
+bool Db::is_materialized_view(const char *view_name) const
+{
+  if (common::is_blank(view_name)) {
+    return false;
+  }
+  return materialized_view_selects_.find(view_name) != materialized_view_selects_.end();
+}
+
+const SelectSqlNode *Db::materialized_view_select(const char *view_name) const
+{
+  auto iter = materialized_view_selects_.find(view_name);
+  if (iter == materialized_view_selects_.end()) {
+    return nullptr;
+  }
+  return iter->second.get();
 }
 
 Table *Db::find_table(int32_t table_id) const

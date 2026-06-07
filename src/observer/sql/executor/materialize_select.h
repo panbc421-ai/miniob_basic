@@ -14,3 +14,5 @@ RC materialize_select_as_table(Db *db, Trx *trx, bool auto_commit,
     const std::vector<AttrInfoSqlNode> *specified_attrs = nullptr,
     const std::vector<std::string> *specified_column_names = nullptr,
     bool output_nullable = false);
+
+RC refresh_materialized_view(Db *db, Trx *trx, const char *view_name);

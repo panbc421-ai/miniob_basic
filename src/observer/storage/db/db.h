@@ -59,6 +59,9 @@ public:
   const char *view_base_table(const char *view_name) const;
   void mark_readonly_view(const char *view_name);
   bool is_readonly_view(const char *view_name) const;
+  RC register_materialized_view(const char *view_name, const SelectSqlNode &select_sql);
+  bool is_materialized_view(const char *view_name) const;
+  const SelectSqlNode *materialized_view_select(const char *view_name) const;
 
   const char *name() const;
 
@@ -81,6 +84,7 @@ private:
   std::unordered_map<std::string, std::vector<std::string>> view_columns_;
   std::unordered_map<std::string, std::vector<ConditionSqlNode>> view_conditions_;
   std::unordered_set<std::string> read_only_views_;
+  std::unordered_map<std::string, std::unique_ptr<SelectSqlNode>> materialized_view_selects_;
   std::unique_ptr<CLogManager> clog_manager_;
 
   /// 给每个table都分配一个ID，用来记录日志。这里假设所有的DDL都不会并发操作，所以相关的数据都不上锁

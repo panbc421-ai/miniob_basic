@@ -196,8 +196,18 @@ public:
       }
     }
 
+    const char *field_data = this->record_->data() + field_meta->offset();
+    if (field_meta->type() == TEXTS && table_ != nullptr) {
+      std::string text;
+      if (table_->resolve_overflow_text(field_data, field_meta->len(), text)) {
+        cell.set_string(text.c_str(), static_cast<int>(text.size()));
+        cell.set_type(TEXTS);
+        return RC::SUCCESS;
+      }
+    }
+
     cell.set_type(field_meta->type());
-    cell.set_data(this->record_->data() + field_meta->offset(), field_meta->len());
+    cell.set_data(field_data, field_meta->len());
     return RC::SUCCESS;
   }
 

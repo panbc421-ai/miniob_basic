@@ -1,4 +1,6 @@
 #include "sql/stmt/select_stmt.h"
+#include "session/session.h"
+#include "sql/executor/materialize_select.h"
 #include "sql/stmt/calc_stmt.h"
 #include "sql/stmt/filter_stmt.h"
 #include "common/log/log.h"
@@ -135,6 +137,17 @@ RC SelectStmt::create(Db *db, const SelectSqlNode &select_sql, Stmt *&stmt,
     if (nullptr == table_name) {
       LOG_WARN("invalid argument. relation name is null. index=%d", i);
       return RC::INVALID_ARGUMENT;
+    }
+    if (db->is_materialized_view(table_name)) {
+      Session *session = Session::current_session();
+      if (session != nullptr) {
+        Trx *trx = session->current_trx();
+        RC refresh_rc = refresh_materialized_view(db, trx, table_name);
+        if (refresh_rc != RC::SUCCESS) {
+          LOG_WARN("failed to refresh materialized view. view=%s rc=%s", table_name, strrc(refresh_rc));
+          return refresh_rc;
+        }
+      }
     }
     Table *table = db->find_table(table_name);
     if (nullptr == table) {

@@ -2,6 +2,8 @@
 
 #include <memory>
 #include <string>
+#include <unordered_set>
+#include <utility>
 #include <vector>
 
 #include "common/log/log.h"
@@ -166,6 +168,43 @@ static RC finish_trx(Trx *trx, bool auto_commit, RC rc)
   return rc;
 }
 
+static RC clear_table_records(Table *table, Trx *trx)
+{
+  if (table == nullptr) {
+    return RC::INVALID_ARGUMENT;
+  }
+
+  RecordFileScanner scanner;
+  RC rc = table->get_record_scanner(scanner, trx, false);
+  if (rc != RC::SUCCESS) {
+    return rc;
+  }
+
+  const int record_size = table->table_meta().record_size();
+  std::vector<std::pair<RID, std::vector<char>>> records;
+  Record record;
+  while (scanner.has_next()) {
+    rc = scanner.next(record);
+    if (rc != RC::SUCCESS) {
+      scanner.close_scan();
+      return rc;
+    }
+    records.push_back({record.rid(), std::vector<char>(record.data(), record.data() + record_size)});
+  }
+  scanner.close_scan();
+
+  for (auto &entry : records) {
+    Record old_record;
+    old_record.set_rid(entry.first);
+    old_record.set_data(entry.second.data(), entry.second.size());
+    rc = table->delete_record(old_record);
+    if (rc != RC::SUCCESS) {
+      return rc;
+    }
+  }
+  return RC::SUCCESS;
+}
+
 static RC create_select_physical_plan(SelectStmt *select_stmt, std::unique_ptr<PhysicalOperator> &phys_oper)
 {
   LogicalPlanGenerator logic_gen;
@@ -215,6 +254,99 @@ static RC create_select_physical_plan(SelectStmt *select_stmt, std::unique_ptr<P
   }
 
   return RC::SUCCESS;
+}
+
+static RC populate_existing_table_from_select(Db *db, Trx *trx,
+    const char *table_name, SelectSqlNode &select_sql)
+{
+  if (db == nullptr || trx == nullptr || table_name == nullptr || table_name[0] == '\0') {
+    return RC::INVALID_ARGUMENT;
+  }
+
+  Table *target_table = db->find_table(table_name);
+  if (target_table == nullptr) {
+    return RC::SCHEMA_TABLE_NOT_EXIST;
+  }
+
+  RC rc = trx->start_if_need();
+  if (rc != RC::SUCCESS) {
+    return rc;
+  }
+
+  rc = clear_table_records(target_table, trx);
+  if (rc != RC::SUCCESS) {
+    return rc;
+  }
+
+  std::unique_ptr<SelectSqlNode> select_sql_copy = clone_select_sql_node(select_sql);
+  if (select_sql_copy == nullptr) {
+    return RC::INVALID_ARGUMENT;
+  }
+
+  Stmt *stmt = nullptr;
+  rc = SelectStmt::create(db, *select_sql_copy, stmt);
+  if (rc != RC::SUCCESS) {
+    return rc;
+  }
+  if (stmt == nullptr || stmt->type() != StmtType::SELECT) {
+    delete stmt;
+    return RC::INVALID_ARGUMENT;
+  }
+  auto *select_stmt = static_cast<SelectStmt *>(stmt);
+
+  std::unique_ptr<PhysicalOperator> phys_oper;
+  rc = create_select_physical_plan(select_stmt, phys_oper);
+  if (rc != RC::SUCCESS) {
+    delete select_stmt;
+    return rc;
+  }
+
+  rc = phys_oper->open(trx);
+  if (rc != RC::SUCCESS) {
+    delete select_stmt;
+    return rc;
+  }
+
+  const int value_count = target_table->table_meta().field_num() - target_table->table_meta().sys_field_num();
+  while ((rc = phys_oper->next()) == RC::SUCCESS) {
+    Tuple *tuple = phys_oper->current_tuple();
+    if (tuple == nullptr) {
+      rc = RC::INTERNAL;
+      break;
+    }
+
+    std::vector<Value> values(value_count);
+    for (int i = 0; i < value_count; i++) {
+      rc = tuple->cell_at(i, values[i]);
+      if (rc != RC::SUCCESS) {
+        break;
+      }
+    }
+    if (rc != RC::SUCCESS) {
+      break;
+    }
+
+    Record record;
+    rc = target_table->make_record(value_count, values.data(), record);
+    if (rc != RC::SUCCESS) {
+      break;
+    }
+    rc = target_table->insert_record(record);
+    if (rc != RC::SUCCESS) {
+      break;
+    }
+  }
+
+  RC close_rc = phys_oper->close();
+  delete select_stmt;
+
+  if (rc == RC::RECORD_EOF) {
+    rc = RC::SUCCESS;
+  }
+  if (rc == RC::SUCCESS && close_rc != RC::SUCCESS) {
+    rc = close_rc;
+  }
+  return rc;
 }
 
 RC materialize_select_as_table(Db *db, Trx *trx, bool auto_commit,
@@ -335,4 +467,31 @@ RC materialize_select_as_table(Db *db, Trx *trx, bool auto_commit,
   }
 
   return finish_trx(trx, auto_commit, rc);
+}
+
+RC refresh_materialized_view(Db *db, Trx *trx, const char *view_name)
+{
+  if (db == nullptr || trx == nullptr || view_name == nullptr || view_name[0] == '\0') {
+    return RC::INVALID_ARGUMENT;
+  }
+
+  static thread_local std::unordered_set<std::string> refreshing_views;
+  if (refreshing_views.find(view_name) != refreshing_views.end()) {
+    return RC::SUCCESS;
+  }
+
+  const SelectSqlNode *view_select = db->materialized_view_select(view_name);
+  if (view_select == nullptr) {
+    return RC::SUCCESS;
+  }
+
+  std::unique_ptr<SelectSqlNode> select_copy = clone_select_sql_node(*view_select);
+  if (select_copy == nullptr) {
+    return RC::INVALID_ARGUMENT;
+  }
+
+  refreshing_views.insert(view_name);
+  RC rc = populate_existing_table_from_select(db, trx, view_name, *select_copy);
+  refreshing_views.erase(view_name);
+  return rc;
 }
