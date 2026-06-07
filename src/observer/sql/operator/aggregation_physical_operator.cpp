@@ -70,7 +70,7 @@ RC AggregationPhysicalOperator::next()
         if (v > max_num_vals[i]) max_num_vals[i] = v;
         if (v < min_num_vals[i]) min_num_vals[i] = v;
         counts[i]++;
-      } else if (attr_type == CHARS) {
+      } else if (attr_type == CHARS || attr_type == TEXTS) {
         std::string s = val.get_string();
         if (af.agg_type == AGG_COUNT) {
           counts[i]++;
@@ -134,7 +134,7 @@ RC AggregationPhysicalOperator::next()
         }
         break;
       case AGG_MAX:
-        if (af.field_meta && af.field_meta->type() == CHARS) {
+        if (af.field_meta && (af.field_meta->type() == CHARS || af.field_meta->type() == TEXTS)) {
           if (!has_str_max[i])
             result.set_null(true);
           else

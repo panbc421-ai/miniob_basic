@@ -6,6 +6,7 @@
 #include "storage/db/db.h"
 #include "storage/table/table.h"
 #include "sql/expr/expression.h"
+#include "sql/parser/condition_clone.h"
 
 #include <algorithm>
 #include <unordered_set>
@@ -142,6 +143,10 @@ RC SelectStmt::create(Db *db, const SelectSqlNode &select_sql, Stmt *&stmt,
     }
     tables.push_back(table);
     table_map.insert(std::pair<std::string, Table *>(table_name, table));
+    const char *base_table_name = db->view_base_table(table_name);
+    if (base_table_name != nullptr) {
+      table_map.insert(std::pair<std::string, Table *>(base_table_name, table));
+    }
   }
 
   // Add alias entries to table_map (alias -> table)
@@ -225,6 +230,7 @@ RC SelectStmt::create(Db *db, const SelectSqlNode &select_sql, Stmt *&stmt,
           LOG_WARN("no such field: %s", relation_attr.attribute_name.c_str());
           return RC::SCHEMA_FIELD_NOT_EXIST;
         }
+        if (!field_visible_in_view(relation_attr.attribute_name, table)) return RC::SCHEMA_FIELD_MISSING;
         agg.field_meta = field_meta;
         agg.table = table;
         std::string func_name;
@@ -482,12 +488,36 @@ RC SelectStmt::create(Db *db, const SelectSqlNode &select_sql, Stmt *&stmt,
     group_by_fields.push_back(Field(table, field_meta));
   }
 
+  std::vector<ConditionSqlNode> combined_conditions;
+  bool has_view_conditions = false;
+  for (const std::string &relation_name : select_sql.relations) {
+    const std::vector<ConditionSqlNode> *view_conditions = db->view_conditions(relation_name.c_str());
+    if (view_conditions != nullptr && !view_conditions->empty()) {
+      RC clone_rc = append_cloned_conditions(*view_conditions, combined_conditions);
+      if (clone_rc != RC::SUCCESS) {
+        return clone_rc;
+      }
+      has_view_conditions = true;
+    }
+  }
+  if (has_view_conditions) {
+    RC clone_rc = append_cloned_conditions(select_sql.conditions, combined_conditions);
+    if (clone_rc != RC::SUCCESS) {
+      return clone_rc;
+    }
+  }
+  const ConditionSqlNode *filter_conditions =
+      has_view_conditions ? combined_conditions.data() : select_sql.conditions.data();
+  const int filter_condition_num = has_view_conditions
+      ? static_cast<int>(combined_conditions.size())
+      : static_cast<int>(select_sql.conditions.size());
+
   FilterStmt *filter_stmt = nullptr;
   RC rc = FilterStmt::create(db,
       default_table,
       &table_map,
-      select_sql.conditions.data(),
-      static_cast<int>(select_sql.conditions.size()),
+      filter_conditions,
+      filter_condition_num,
       filter_stmt,
       outer_table_map,
       nullptr,

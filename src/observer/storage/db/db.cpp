@@ -21,6 +21,7 @@ See the Mulan PSL v2 for more details. */
 #include "common/log/log.h"
 #include "common/os/path.h"
 #include "common/lang/string.h"
+#include "sql/parser/condition_clone.h"
 #include "storage/table/table_meta.h"
 #include "storage/table/table.h"
 #include "storage/common/meta_util.h"
@@ -102,10 +103,16 @@ RC Db::create_table(const char *table_name, int attribute_count, const AttrInfoS
 }
 RC Db::create_view_alias(const char *view_name, const char *base_table_name)
 {
-  return create_view_alias(view_name, base_table_name, std::vector<std::string>());
+  return create_view_alias(view_name, base_table_name, std::vector<std::string>(), nullptr);
 }
 
 RC Db::create_view_alias(const char *view_name, const char *base_table_name, const std::vector<std::string> &columns)
+{
+  return create_view_alias(view_name, base_table_name, columns, nullptr);
+}
+
+RC Db::create_view_alias(const char *view_name, const char *base_table_name,
+    const std::vector<std::string> &columns, const std::vector<ConditionSqlNode> *conditions)
 {
   if (common::is_blank(view_name) || common::is_blank(base_table_name)) {
     return RC::INVALID_ARGUMENT;
@@ -121,8 +128,18 @@ RC Db::create_view_alias(const char *view_name, const char *base_table_name, con
     return RC::SCHEMA_TABLE_NOT_EXIST;
   }
 
+  std::vector<ConditionSqlNode> cloned_conditions;
+  if (conditions != nullptr && !conditions->empty()) {
+    RC rc = append_cloned_conditions(*conditions, cloned_conditions);
+    if (rc != RC::SUCCESS) {
+      LOG_WARN("failed to clone view conditions. view=%s, rc=%s", view_name, strrc(rc));
+      return rc;
+    }
+  }
+
   view_aliases_[view_name] = base_table->name();
   view_columns_[view_name] = columns;
+  view_conditions_[view_name] = std::move(cloned_conditions);
   LOG_INFO("Create view alias success. view name=%s, base table=%s", view_name, base_table->name());
   return RC::SUCCESS;
 }
@@ -133,6 +150,7 @@ RC Db::drop_table(const char *table_name)
   if (view_iter != view_aliases_.end()) {
     view_aliases_.erase(view_iter);
     view_columns_.erase(table_name);
+    view_conditions_.erase(table_name);
     LOG_INFO("Drop view alias success. view name=%s", table_name);
     return RC::SUCCESS;
   }
@@ -162,6 +180,7 @@ RC Db::drop_table(const char *table_name)
   for (auto alias_iter = view_aliases_.begin(); alias_iter != view_aliases_.end();) {
     if (alias_iter->second == table_name) {
       view_columns_.erase(alias_iter->first);
+      view_conditions_.erase(alias_iter->first);
       alias_iter = view_aliases_.erase(alias_iter);
     } else {
       ++alias_iter;
@@ -191,6 +210,15 @@ const std::vector<std::string> *Db::view_columns(const char *view_name) const
 {
   auto iter = view_columns_.find(view_name);
   if (iter == view_columns_.end()) {
+    return nullptr;
+  }
+  return &iter->second;
+}
+
+const std::vector<ConditionSqlNode> *Db::view_conditions(const char *view_name) const
+{
+  auto iter = view_conditions_.find(view_name);
+  if (iter == view_conditions_.end() || iter->second.empty()) {
     return nullptr;
   }
   return &iter->second;

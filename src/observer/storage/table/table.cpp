@@ -409,8 +409,11 @@ RC Table::make_record(int value_num, const Value *values, Record &record, const 
     size_t copy_len = field->len();
     if (field->type() == CHARS || field->type() == TEXTS) {
       const size_t data_len = value.length();
-      if (copy_len > data_len) {
-        copy_len = data_len + 1;
+      copy_len = std::min(copy_len, data_len);
+      if (copy_len < static_cast<size_t>(field->len())) {
+        memcpy(record_data + field->offset(), value.data(), copy_len);
+        record_data[field->offset() + copy_len] = '\0';
+        continue;
       }
     }
     memcpy(record_data + field->offset(), value.data(), copy_len);

@@ -64,7 +64,9 @@ void Value::set_data(char *data, int length)
   switch (attr_type_) {
     case CHARS:
     case TEXTS: {
+      AttrType original_type = attr_type_;
       set_string(data, length);
+      attr_type_ = original_type;
     } break;
     case INTS: {
       num_value_.int_value_ = *(int *)data;

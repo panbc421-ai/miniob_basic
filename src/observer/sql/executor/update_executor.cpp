@@ -15,6 +15,7 @@
 #include "common/log/log.h"
 #include "session/session.h"
 #include "sql/expr/tuple.h"
+#include "sql/parser/condition_clone.h"
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -207,6 +208,18 @@ static RC validate_update_subquery_relations(Db *db, const SelectSqlNode &select
     }
   }
 
+  std::unique_ptr<SelectSqlNode> select_copy = clone_select_sql_node(select_sql);
+  if (select_copy == nullptr) {
+    return RC::INVALID_ARGUMENT;
+  }
+
+  Stmt *validation_stmt = nullptr;
+  RC rc = SelectStmt::create(db, *select_copy, validation_stmt);
+  if (rc != RC::SUCCESS) {
+    LOG_WARN("invalid update subquery. rc=%s", strrc(rc));
+    return rc;
+  }
+  delete validation_stmt;
   return RC::SUCCESS;
 }
 

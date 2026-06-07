@@ -15,6 +15,7 @@ See the Mulan PSL v2 for more details. */
 #include "sql/stmt/filter_stmt.h"
 #include "storage/db/db.h"
 #include "storage/table/table.h"
+#include "sql/parser/condition_clone.h"
 #include "common/log/log.h"
 #include <unordered_map>
 
@@ -59,8 +60,33 @@ RC UpdateStmt::create(Db *db, const UpdateSqlNode &update, Stmt *&stmt)
   FilterStmt *filter_stmt = nullptr;
   std::unordered_map<std::string, Table *> table_map;
   table_map[table_name] = table;
-  RC rc = FilterStmt::create(db, table, &table_map,
-      update.conditions.data(), static_cast<int>(update.conditions.size()), filter_stmt);
+  const char *base_table_name = db->view_base_table(table_name);
+  if (base_table_name != nullptr) {
+    table_map[base_table_name] = table;
+  }
+
+  RC rc = RC::SUCCESS;
+  std::vector<ConditionSqlNode> combined_conditions;
+  const std::vector<ConditionSqlNode> *view_conditions = db->view_conditions(table_name);
+  bool has_view_conditions = view_conditions != nullptr && !view_conditions->empty();
+  if (has_view_conditions) {
+    rc = append_cloned_conditions(*view_conditions, combined_conditions);
+    if (rc != RC::SUCCESS) {
+      return rc;
+    }
+    rc = append_cloned_conditions(update.conditions, combined_conditions);
+    if (rc != RC::SUCCESS) {
+      return rc;
+    }
+  }
+  const ConditionSqlNode *filter_conditions =
+      has_view_conditions ? combined_conditions.data() : update.conditions.data();
+  const int filter_condition_num = has_view_conditions
+      ? static_cast<int>(combined_conditions.size())
+      : static_cast<int>(update.conditions.size());
+
+  rc = FilterStmt::create(db, table, &table_map,
+      filter_conditions, filter_condition_num, filter_stmt);
   if (rc != RC::SUCCESS) {
     LOG_WARN("failed to create filter statement. rc=%d:%s", rc, strrc(rc));
     return rc;
