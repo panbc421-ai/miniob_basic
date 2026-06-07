@@ -16,14 +16,19 @@
 #include "session/session.h"
 #include "sql/expr/tuple.h"
 #include "sql/parser/condition_clone.h"
+#include <cmath>
 #include <stdexcept>
 #include <string>
 #include <vector>
 
 static bool parse_int_value(const Value &input, int &output)
 {
-  if (input.attr_type() == INTS || input.attr_type() == FLOATS) {
+  if (input.attr_type() == INTS) {
     output = input.get_int();
+    return true;
+  }
+  if (input.attr_type() == FLOATS) {
+    output = static_cast<int>(std::lround(input.get_double()));
     return true;
   }
   if (input.attr_type() == CHARS || input.attr_type() == TEXTS) {
