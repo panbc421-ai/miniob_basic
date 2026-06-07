@@ -33,7 +33,7 @@ See the Mulan PSL v2 for more details. */
 #include "storage/trx/trx.h"
 
 static const char *TEXT_OVERFLOW_PREFIX = "\x01MINIOB_TEXT:";
-static const int MAX_TEXT_VALUE_LENGTH = 8192;
+static const int MAX_TEXT_VALUE_LENGTH = 65535;
 
 static bool text_overflow_marker(const char *field_data, int field_len, std::string &marker)
 {
