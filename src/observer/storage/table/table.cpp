@@ -393,6 +393,11 @@ RC Table::make_record(int value_num, const Value *values, Record &record, const 
                 table_meta_.name(), field->name(), field->type(), value.attr_type());
       return RC::SCHEMA_FIELD_TYPE_MISMATCH;
     }
+    if (field->type() == TEXTS && value.length() > static_cast<size_t>(field->len())) {
+      LOG_WARN("text value is too long. table=%s, field=%s, value_len=%d, field_len=%d",
+               table_meta_.name(), field->name(), static_cast<int>(value.length()), field->len());
+      return RC::SCHEMA_FIELD_TYPE_MISMATCH;
+    }
   }
 
   // 复制所有字段的值
