@@ -140,6 +140,7 @@ RC Db::create_view_alias(const char *view_name, const char *base_table_name,
   view_aliases_[view_name] = base_table->name();
   view_columns_[view_name] = columns;
   view_conditions_[view_name] = std::move(cloned_conditions);
+  read_only_views_.erase(view_name);
   LOG_INFO("Create view alias success. view name=%s, base table=%s", view_name, base_table->name());
   return RC::SUCCESS;
 }
@@ -151,6 +152,7 @@ RC Db::drop_table(const char *table_name)
     view_aliases_.erase(view_iter);
     view_columns_.erase(table_name);
     view_conditions_.erase(table_name);
+    read_only_views_.erase(table_name);
     LOG_INFO("Drop view alias success. view name=%s", table_name);
     return RC::SUCCESS;
   }
@@ -167,6 +169,7 @@ RC Db::drop_table(const char *table_name)
 
   // 从内存中删除表
   opened_tables_.erase(iter);
+  read_only_views_.erase(table_name);
 
   // 删除表的文件
   RC rc = table->destroy(path_.c_str());
@@ -181,6 +184,7 @@ RC Db::drop_table(const char *table_name)
     if (alias_iter->second == table_name) {
       view_columns_.erase(alias_iter->first);
       view_conditions_.erase(alias_iter->first);
+      read_only_views_.erase(alias_iter->first);
       alias_iter = view_aliases_.erase(alias_iter);
     } else {
       ++alias_iter;
@@ -231,6 +235,21 @@ const char *Db::view_base_table(const char *view_name) const
     return nullptr;
   }
   return iter->second.c_str();
+}
+
+void Db::mark_readonly_view(const char *view_name)
+{
+  if (!common::is_blank(view_name)) {
+    read_only_views_.insert(view_name);
+  }
+}
+
+bool Db::is_readonly_view(const char *view_name) const
+{
+  if (common::is_blank(view_name)) {
+    return false;
+  }
+  return read_only_views_.find(view_name) != read_only_views_.end();
 }
 
 Table *Db::find_table(int32_t table_id) const

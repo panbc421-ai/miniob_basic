@@ -44,6 +44,10 @@ RC DeleteStmt::create(Db *db, const DeleteSqlNode &delete_sql, Stmt *&stmt)
     LOG_WARN("no such table. db=%s, table_name=%s", db->name(), table_name);
     return RC::SCHEMA_TABLE_NOT_EXIST;
   }
+  if (db->is_readonly_view(table_name)) {
+    LOG_WARN("cannot delete from readonly view. view=%s", table_name);
+    return RC::INVALID_ARGUMENT;
+  }
 
   std::unordered_map<std::string, Table *> table_map;
   table_map.insert(std::pair<std::string, Table *>(std::string(table_name), table));

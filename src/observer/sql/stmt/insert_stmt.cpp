@@ -71,6 +71,10 @@ RC InsertStmt::create(Db *db, const InsertSqlNode &inserts, Stmt *&stmt)
     LOG_WARN("no such table. db=%s, table_name=%s", db->name(), table_name);
     return RC::SCHEMA_TABLE_NOT_EXIST;
   }
+  if (db->is_readonly_view(table_name)) {
+    LOG_WARN("cannot insert into readonly view. view=%s", table_name);
+    return RC::INVALID_ARGUMENT;
+  }
 
   // check the fields number (supports multi-tuple: value_num must be multiple of field_num)
   const Value *values = inserts.values.data();

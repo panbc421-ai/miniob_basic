@@ -247,15 +247,23 @@ RC CreateViewExecutor::execute(SQLStageEvent *sql_event)
 
   const bool auto_commit = !session->is_trx_multi_operation_mode();
   if (is_simple_expression_view(stmt->select_sql())) {
-    return materialize_simple_expression_view(session->get_current_db(),
+    RC rc = materialize_simple_expression_view(session->get_current_db(),
         session->current_trx(), auto_commit,
         stmt->view_name().c_str(), stmt->select_sql(),
         stmt->column_names().empty() ? nullptr : &stmt->column_names());
+    if (rc == RC::SUCCESS) {
+      session->get_current_db()->mark_readonly_view(stmt->view_name().c_str());
+    }
+    return rc;
   }
 
-  return materialize_select_as_table(session->get_current_db(),
+  RC rc = materialize_select_as_table(session->get_current_db(),
       session->current_trx(), auto_commit,
       stmt->view_name().c_str(), stmt->select_sql(),
       nullptr, stmt->column_names().empty() ? nullptr : &stmt->column_names(),
       true);
+  if (rc == RC::SUCCESS) {
+    session->get_current_db()->mark_readonly_view(stmt->view_name().c_str());
+  }
+  return rc;
 }

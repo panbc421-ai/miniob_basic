@@ -17,6 +17,7 @@ See the Mulan PSL v2 for more details. */
 #include <vector>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <memory>
 
 #include "common/rc.h"
@@ -56,6 +57,8 @@ public:
   const std::vector<std::string> *view_columns(const char *view_name) const;
   const std::vector<ConditionSqlNode> *view_conditions(const char *view_name) const;
   const char *view_base_table(const char *view_name) const;
+  void mark_readonly_view(const char *view_name);
+  bool is_readonly_view(const char *view_name) const;
 
   const char *name() const;
 
@@ -77,6 +80,7 @@ private:
   std::unordered_map<std::string, std::string> view_aliases_;
   std::unordered_map<std::string, std::vector<std::string>> view_columns_;
   std::unordered_map<std::string, std::vector<ConditionSqlNode>> view_conditions_;
+  std::unordered_set<std::string> read_only_views_;
   std::unique_ptr<CLogManager> clog_manager_;
 
   /// 给每个table都分配一个ID，用来记录日志。这里假设所有的DDL都不会并发操作，所以相关的数据都不上锁
